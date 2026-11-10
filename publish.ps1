@@ -21,7 +21,7 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses') -Destination $output
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'assets') -Destination $output -Recurse
 $images = Join-Path $output 'docs/images'
 New-Item -ItemType Directory -Path $images -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs/images/vibryule.png') -Destination $images
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs/images/hyrule-castle-v1.2.0.png') -Destination $images
 
 $runtime = Get-Content -LiteralPath (Join-Path $output 'Vibryule.runtimeconfig.json') -Raw | ConvertFrom-Json
 if ($runtime.runtimeOptions.includedFrameworks -or !$runtime.runtimeOptions.frameworks) {

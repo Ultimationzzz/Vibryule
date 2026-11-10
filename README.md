@@ -1,4 +1,4 @@
-![Vibryule showing Hyrule Castle with sky, water, floating selection controls and trigger inspection](docs/images/vibryule.png?v=1.2.0)
+![Vibryule showing Hyrule Castle with sky, water, floating selection controls and trigger inspection](docs/images/hyrule-castle-v1.2.0.png)
 
 # Vibryule
 
