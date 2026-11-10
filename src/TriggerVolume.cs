@@ -40,6 +40,8 @@ sealed class TriggerVolume
         get;
     }
     internal Vector3 Center => Vector3.Transform(Vector3.Zero, Transform);
+    internal double WorldVolume => Math.Abs((double)Transform.GetDeterminant()) * (Shape == ZoneGeometry.Sphere ? 4 * Math.PI / 3 : 8);
+    internal bool IsFog => Actor.Name.Equals("VolumeFogArea", StringComparison.OrdinalIgnoreCase);
     internal Vertex[] Lines
     {
         get;
@@ -151,6 +153,30 @@ sealed class TriggerVolume
         return hit >= 0 && float.IsFinite(hit);
     }
     public override string ToString() => $"{Actor.Name} · {Center.X:F0}, {Center.Y:F0}, {Center.Z:F0} · {Label}";
+
+    internal static TriggerVolume? PickSmallest(IEnumerable<TriggerVolume> zones, Vector3 origin, Vector3 direction)
+    {
+        TriggerVolume? selected = null;
+        double smallest = double.PositiveInfinity;
+        float nearest = float.PositiveInfinity;
+        foreach (var zone in zones)
+        {
+            if (!zone.Ray(origin, direction, out float hit))
+                continue;
+            double volume = zone.WorldVolume;
+            if (!double.IsFinite(volume) || volume <= 0)
+                continue;
+            // Rotation can introduce a tiny determinant rounding difference.
+            bool sameSize = selected != null && Math.Abs(volume - smallest) <= Math.Max(volume, smallest) * 1e-6;
+            if (selected == null || (!sameSize && volume < smallest) || (sameSize && hit < nearest))
+            {
+                selected = zone;
+                smallest = volume;
+                nearest = hit;
+            }
+        }
+        return selected;
+    }
 
     internal static IReadOnlyList<TriggerVolume> Read(Actor actor, JsonElement? definitions, FallZoneKind fallKind = FallZoneKind.None)
     {

@@ -5,6 +5,8 @@
 Required Notice: Copyright (c) 2026 Ultimation.
 Required Notice: Created by Ultimation and ChatGPT.
 
+The Zelda-inspired application icon is AI-generated artwork made with ChatGPT's built-in image generation for Vibryule. It is not extracted game art. The source artwork and generation prompt are in [assets](assets/README.md). Zelda imagery and trademarks belong to their respective owners.
+
 ## Included components
 
 Third-party components retain their own licenses. Vibryule's noncommercial restriction does not replace or restrict those independent licenses. Copies of the notices are in [licenses](licenses/).
@@ -22,7 +24,7 @@ AstcSharp includes Basis Universal-derived decoding code by **Binomial LLC**. It
 
 ## Format and navigation references
 
-- [BfresLibrary](https://github.com/KillzXGaming/BfresLibrary), **Syroot (Ray Koopa), KillzXGaming and contributors** — MIT. Binary layouts and vertex-format identifiers informed Vibryule's small read-only BFRES v10 parser. Reference revision: `e2c5debca60e9b95e0fd220d32886102d65166bf`. The MIT notice is retained.
+- [BfresLibrary](https://github.com/KillzXGaming/BfresLibrary), **Syroot (Ray Koopa), KillzXGaming and contributors** — MIT. Binary layouts, vertex-format identifiers and skeleton/bone layouts informed Vibryule's small read-only BFRES v10 parser. Reference revision: `e2c5debca60e9b95e0fd220d32886102d65166bf`. The MIT notice is retained.
 - [oot-remake-modding / zstool](https://github.com/Kabosune/oot-remake-modding), **KaboWabo / Kabosune** — MIT. BYML format reference; license retained. No Python scripts are shipped or run.
 - [Lichii](https://github.com/zortos293/Lichii), **zortos293 and Lichii contributors**, with upstream Eglantine, Eden, yuzu and Sudachi contributors — reference for NUP container layout. No emulator code or binaries are included.
 - [Switch 2 Toolbox](https://github.com/qierjvn/Switch-2-Toolbox), **qierjvn, KillzXGaming and contributors** — earlier investigation of BFRES/BNTX layouts and Ounce texture addressing. Its GPL reader was replaced before release; no Toolbox code or binaries are distributed.

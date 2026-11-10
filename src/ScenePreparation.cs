@@ -32,7 +32,7 @@ static class ScenePreparation
             throw new InvalidOperationException("Choose a cache outside the NUP directory.");
         string sceneId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(actual.Folder + "\0" + actual.Name)))[..12].ToLowerInvariant();
         string parent = Path.Combine(cacheRoot, nup.Identity());
-        string final = Path.Combine(parent, "t10-" + sceneId);
+        string final = Path.Combine(parent, "t12-" + sceneId);
         string manifest = Path.Combine(final, "scene.json");
         Directory.CreateDirectory(parent);
         if (File.Exists(manifest))
@@ -297,17 +297,22 @@ static class ScenePreparation
                 var uv = shape.Uvs;
                 var normals = shape.Normals;
                 var indices = shape.Indices;
-                string? texture = null;
+                string? texture = null, emission = null;
                 if (uv != null && uv.Length == position.Length)
                 {
                     var albedo = shape.Textures.FirstOrDefault(x => x.EndsWith("_Alb", StringComparison.OrdinalIgnoreCase));
                     if (albedo != null)
                         texture = getTexture(albedo);
+                    var emissionColor = shape.Textures.FirstOrDefault(x => x.EndsWith("_Emc", StringComparison.OrdinalIgnoreCase));
+                    if (emissionColor != null)
+                        emission = getTexture(emissionColor);
                 }
                 json.WriteStartObject();
                 json.WriteString("shape", shape.Name);
                 if (texture != null)
                     json.WriteString("texture", texture);
+                if (emission != null)
+                    json.WriteString("emissionTexture", emission);
                 json.WriteStartArray("vertices");
                 foreach (var point in position)
                 {
@@ -331,7 +336,7 @@ static class ScenePreparation
                     }
                     json.WriteEndArray();
                 }
-                if (texture != null)
+                if (texture != null || emission != null)
                 {
                     json.WriteStartArray("uv");
                     foreach (var point in uv!)

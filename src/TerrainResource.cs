@@ -87,8 +87,9 @@ static class TerrainResource
             for (int x = 0; x < 257; x++)
             {
                 float h = r.Float(start + TextureOffset(x, y));
-                if (h < 0 || h > 1)
-                    throw new InvalidDataException("Terrain height outside normalized range.");
+                // R32 float heights are scaled by the descriptor, not UNORM.
+                // Castle terrain includes negative elevations; preserve them.
+                // Reader.Float still rejects NaN and infinity.
                 heights[y * 257 + x] = h;
             }
         return heights;

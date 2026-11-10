@@ -28,6 +28,7 @@ static class BfresGeometry
             int model = checked(modelTable + m * 0x78);
             r.Signature(model, "FMDL");
             int shapeTable = r.Pointer(model + 0x28), shapeCount = r.U16(model + 0x6a), materialTable = r.Pointer(model + 0x38), materialCount = r.U16(model + 0x6c);
+            Matrix4x4[]? bindPose = null;
             var textures = new string[materialCount][];
             for (int i = 0; i < materialCount; i++)
             {
@@ -85,12 +86,50 @@ static class BfresGeometry
                         throw new InvalidDataException("BFRES index exceeds its vertex buffer.");
                 }
                 Vector3[] V3(Vector4[] values) => values.Select(v => new Vector3(v.X, v.Y, v.Z)).ToArray();
+                var points = V3(positions);
+                var normalVectors = attributes.TryGetValue("_n0", out var normals) ? V3(normals) : null;
+                // Unskinned shapes store vertices in their attached bone's local space.
+                // Apply the rest hierarchy once, before the actor placement transform.
+                if (r.Byte(shape + 0x5a) == 0 && r.Pointer(model + 0x18) != 0)
+                {
+                    bindPose ??= ReadBindPose(r, r.Pointer(model + 0x18));
+                    int bone = r.U16(shape + 0x54);
+                    if (bone >= bindPose.Length)
+                        throw new InvalidDataException("BFRES shape bone outside skeleton.");
+                    var matrix = bindPose[bone];
+                    points = points.Select(p => Vector3.Transform(p, matrix)).ToArray();
+                    if (normalVectors != null)
+                    {
+                        if (!Matrix4x4.Invert(matrix, out var inverse))
+                            throw new InvalidDataException("Singular BFRES bone transform.");
+                        var normalMatrix = Matrix4x4.Transpose(inverse);
+                        normalVectors = normalVectors.Select(n => Vector3.TransformNormal(n, normalMatrix)).ToArray();
+                    }
+                }
                 int mat = r.U16(shape + 0x52);
-                shapes.Add(new(r.String(r.Pointer(shape + 8)), V3(positions), attributes.TryGetValue("_n0", out var normals) ? V3(normals) : null, attributes.TryGetValue("_u0", out var uv) ? uv.Select(v => new Vector2(v.X, v.Y)).ToArray() : null, indices, mat < textures.Length ? textures[mat] : []));
+                shapes.Add(new(r.String(r.Pointer(shape + 8)), points, normalVectors, attributes.TryGetValue("_u0", out var uv) ? uv.Select(v => new Vector2(v.X, v.Y)).ToArray() : null, indices, mat < textures.Length ? textures[mat] : []));
             }
             result.Add(new(r.String(r.Pointer(model + 8)), shapes));
         }
         return result;
+    }
+
+    private static Matrix4x4[] ReadBindPose(Reader r, int skeleton)
+    {
+        r.Signature(skeleton, "FSKL");
+        int count = r.U16(skeleton + 0x38), table = r.Pointer(skeleton + 0x10);
+        if (count > 4096)
+            throw new InvalidDataException("Invalid BFRES bone count.");
+        r.Check(table, checked(count * 0x58));
+        var bones = new BonePose[count];
+        for (int i = 0; i < count; i++)
+        {
+            int p = table + i * 0x58;
+            Vector3 V3(int at) => new(r.Float(at), r.Float(at + 4), r.Float(at + 8));
+            var rotation = new Vector4(V3(p + 0x3c), r.Float(p + 0x48));
+            bones[i] = new(unchecked((short)r.U16(p + 0x22)), V3(p + 0x30), rotation, V3(p + 0x4c), (r.U32(p + 0x2c) & 0x1000) != 0);
+        }
+        return BonePose.WorldMatrices(bones);
     }
 
     private static Dictionary<string, Vector4[]> ReadVertices(Reader r, int vertex, int gpu)

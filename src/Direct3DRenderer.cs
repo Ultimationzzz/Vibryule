@@ -20,10 +20,42 @@ sealed partial class Direct3DRenderer : IDisposable
     internal const string TextureShader = """
         cbuffer Camera : register(b0) { row_major float4x4 viewProjection; };
         cbuffer Lighting : register(b1) { float4 sun; float4 ambientExposure; float4 camera; float4 skyColor; float4 water; };
+        cbuffer Material : register(b2) { float4 emission; };
+        cbuffer Sky : register(b3) { row_major float4x4 inverseViewProjection; float4 skyOptions; };
         Texture2D tex:register(t0); SamplerState samp:register(s0);
+        Texture2D emissionTex:register(t1);
         struct V { float3 p:POSITION; float4 c:COLOR; float2 uv:TEXCOORD; float3 n:NORMAL; };
         struct O { float4 p:SV_POSITION; float4 c:COLOR; float2 uv:TEXCOORD0; float3 n:NORMAL; float3 world:TEXCOORD1; };
         O vs(V v) { O o; o.p=mul(float4(v.p,1),viewProjection); o.c=v.c; o.uv=v.uv; o.n=v.n; o.world=v.p; return o; }
+        float hash(float2 p) { return frac(sin(dot(p,float2(127.1,311.7)))*43758.5453); }
+        float noise(float2 p) {
+            float2 cell=floor(p), f=frac(p); f=f*f*(3-2*f);
+            return lerp(lerp(hash(cell),hash(cell+float2(1,0)),f.x),lerp(hash(cell+float2(0,1)),hash(cell+1),f.x),f.y);
+        }
+        float cloudNoise(float2 p) {
+            return noise(p)*0.53+noise(p*2.03+7.1)*0.27+noise(p*4.07+19.3)*0.13+noise(p*8.11)*0.07;
+        }
+        float3 skyRadiance(float3 ray) {
+            if(skyOptions.x<0.5)return skyColor.rgb;
+            float height=saturate(ray.y);
+            float3 horizon=lerp(skyColor.rgb,float3(0.65,0.74,0.80),0.65);
+            float3 zenith=skyColor.rgb*float3(0.32,0.56,1.0);
+            float3 color=lerp(horizon,zenith,pow(height,0.45));
+            color=lerp(color,skyColor.rgb*0.4,saturate(-ray.y*4));
+            float sunDot=saturate(dot(ray,sun.xyz));
+            float halo=pow(sunDot,32)*0.18;
+            float disk=smoothstep(0.99965,0.9999,sunDot)*3;
+            color+=float3(1.0,0.82,0.56)*(halo+disk)*min(sun.w,2)*smoothstep(-0.08,0.04,ray.y);
+            if(skyOptions.y>0.001 && ray.y>0) {
+                float2 p=ray.xz/max(ray.y,0.08)*1.5;
+                float cloud=cloudNoise(p);
+                float threshold=lerp(0.85,0.25,skyOptions.y);
+                float coverage=smoothstep(threshold,threshold+0.16,cloud)*smoothstep(0.01,0.18,ray.y);
+                float3 cloudColor=lerp(float3(0.46,0.55,0.66),float3(1.05,1.04,1.0),smoothstep(threshold,threshold+0.3,cloud));
+                color=lerp(color,cloudColor,coverage*0.9);
+            }
+            return color;
+        }
         float3 displayColor(float3 radiance) {
             // Soft highlight roll-off, followed by the linear-to-sRGB transfer.
             float3 mapped=1-exp(-max(radiance,0)*ambientExposure.y);
@@ -39,6 +71,7 @@ sealed partial class Direct3DRenderer : IDisposable
                 float diffuse=saturate(dot(n,sun.xyz));
                 radiance=albedo*(ambient+float3(1.0,0.92,0.80)*diffuse*sun.w);
             }
+            if(emission.x>0)radiance+=emissionTex.Sample(samp,i.uv).rgb*emission.x;
             if(ambientExposure.w>0.5) {
                 float d=length(camera.xyz-i.world);
                 float fog=1-exp(-pow(d/max(1,camera.w),2));
@@ -54,13 +87,14 @@ sealed partial class Direct3DRenderer : IDisposable
             float3 tangent=normalize(cross(abs(baseNormal.y)<0.9?float3(0,1,0):float3(0,0,1),baseNormal));
             float3 bitangent=cross(baseNormal,tangent);
             float2 p=float2(dot(i.world,tangent),dot(i.world,bitangent));
-            float2 ripple=float2(sin(p.x*0.65+p.y*0.31+t*1.7),cos(p.y*0.83-p.x*0.23-t*1.3));
+            float2 phase=float2(p.x*0.65+p.y*0.31+t*1.7,p.y*0.83-p.x*0.23-t*1.3);
+            float2 ripple=float2(sin(phase.x),cos(phase.y))/(1+fwidth(phase)*fwidth(phase));
             float3 n=normalize(baseNormal+(tangent*ripple.x+bitangent*ripple.y)*water.y);
             if(!front)n=-n;
             float3 eye=normalize(camera.xyz-i.world+float3(0,0.0001,0));
             if(dot(n,eye)<0)n=-n;
             float fresnel=0.03+0.97*pow(1-saturate(dot(n,eye)),5);
-            float3 reflection=skyColor.rgb*lerp(0.6,1.6,saturate(reflect(-eye,n).y*0.5+0.5));
+            float3 reflection=skyRadiance(reflect(-eye,n));
             float3 tint=float3(0.025,0.16,0.21);
             float diffuse=ambientExposure.z>0.5?ambientExposure.x+sun.w*saturate(dot(n,sun.xyz))*0.35:1;
             float3 radiance=lerp(tint*diffuse,reflection,fresnel);
@@ -79,7 +113,13 @@ sealed partial class Direct3DRenderer : IDisposable
         float4 psWaterfall(O i,bool front:SV_IsFrontFace):SV_TARGET {return waterColor(i,front,true);}
         struct SkyOutput {float4 p:SV_POSITION;float2 uv:TEXCOORD;};
         SkyOutput vsSky(uint id:SV_VertexID){SkyOutput o;o.uv=float2((id<<1)&2,id&2);o.p=float4(o.uv*float2(2,-2)+float2(-1,1),1,1);return o;}
-        float4 psSky(SkyOutput i):SV_TARGET {return float4(displayColor(skyColor.rgb*lerp(0.55,1.1,saturate(i.uv.y))),1);}
+        float4 psSky(SkyOutput i):SV_TARGET {
+            float2 ndc=i.uv*float2(2,-2)+float2(-1,1);
+            float4 nearPoint=mul(float4(ndc,0,1),inverseViewProjection);
+            float4 farPoint=mul(float4(ndc,0.9,1),inverseViewProjection);
+            float3 ray=normalize(farPoint.xyz/farPoint.w-nearPoint.xyz/nearPoint.w);
+            return float4(displayColor(skyRadiance(ray)),1);
+        }
         """;
     private readonly ID3D11Device device;
     private readonly ID3D11DeviceContext context;
@@ -103,6 +143,8 @@ sealed partial class Direct3DRenderer : IDisposable
     private readonly ID3D11PixelShader selectionPs;
     private readonly ID3D11Buffer matrixBuffer;
     private readonly ID3D11Buffer lightingBuffer;
+    private readonly ID3D11Buffer materialBuffer;
+    private readonly ID3D11Buffer skyBuffer;
     private readonly ID3D11VertexShader skyVs;
     private readonly ID3D11PixelShader skyPs;
     private readonly ID3D11BlendState overlayBlend;
@@ -140,6 +182,8 @@ sealed partial class Direct3DRenderer : IDisposable
         worldVs = device.CreateVertexShader(Compiler.Compile(WorldShader, "vs", "world", "vs_4_0").Span);
         matrixBuffer = device.CreateBuffer(64, BindFlags.ConstantBuffer);
         lightingBuffer = device.CreateBuffer((uint)Marshal.SizeOf<LightingConstants>(), BindFlags.ConstantBuffer);
+        materialBuffer = device.CreateBuffer(16, BindFlags.ConstantBuffer);
+        skyBuffer = device.CreateBuffer((uint)Marshal.SizeOf<SkyConstants>(), BindFlags.ConstantBuffer);
         layout = device.CreateInputLayout([new("POSITION", 0, Format.R32G32B32_Float, 0, 0), new("COLOR", 0, Format.R32G32B32A32_Float, 12, 0)], vertexCode.Span);
         var texCode = Compiler.Compile(TextureShader, "vs", "texture", "vs_4_0");
         textureVs = device.CreateVertexShader(texCode.Span);
@@ -171,7 +215,7 @@ sealed partial class Direct3DRenderer : IDisposable
         foreach (var texture in textures.Values)
             texture.Dispose();
         textures.Clear();
-        foreach (var path in geometryRanges.Select(r => r.Texture).Where(p => p != null).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var path in geometryRanges.SelectMany(r => new[] { r.Texture, r.EmissionTexture }).Where(p => p != null).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             try
             {
@@ -214,6 +258,11 @@ sealed partial class Direct3DRenderer : IDisposable
         context.OMSetDepthStencilState(null);
         context.UpdateSubresource(settings.Constants(cameraPosition, settings.AnimateWater ? timeSeconds ?? (float)animationClock.Elapsed.TotalSeconds : 0), lightingBuffer);
         context.PSSetConstantBuffer(1, lightingBuffer);
+        context.PSSetConstantBuffer(2, materialBuffer);
+        if (!Matrix4x4.Invert(viewProjection, out var inverseViewProjection))
+            inverseViewProjection = Matrix4x4.Identity;
+        context.UpdateSubresource(new SkyConstants { InverseViewProjection = inverseViewProjection, Options = new(settings.Sky ? 1 : 0, settings.Clouds, 0, 0) }, skyBuffer);
+        context.PSSetConstantBuffer(3, skyBuffer);
         context.OMSetRenderTargets(target);
         context.IASetInputLayout(null);
         context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
@@ -242,13 +291,19 @@ sealed partial class Direct3DRenderer : IDisposable
                         continue;
                     if (filterModels && range.Owner != null && nameMatches != null && !nameMatches.Contains(range.Owner))
                         continue;
+                    ID3D11ShaderResourceView? emissionView = null;
+                    if (gameRendering && settings.Emission && range.EmissionTexture != null)
+                        textures.TryGetValue(range.EmissionTexture, out emissionView);
+                    // D3D11 accepts null to unbind the previous material's map.
+                    context.PSSetShaderResource(1, emissionView!);
+                    context.UpdateSubresource(new Vector4(emissionView == null ? 0 : settings.EmissionStrength, 0, 0, 0), materialBuffer);
+                    context.PSSetSampler(0, range.Terrain ? terrainSampler : sampler);
                     if (gameRendering && range.Texture != null && textures.TryGetValue(range.Texture, out var tex))
                     {
                         context.IASetInputLayout(textureLayout);
                         context.VSSetShader(textureVs);
                         context.PSSetShader(texturePs);
                         context.PSSetShaderResource(0, tex);
-                        context.PSSetSampler(0, range.Terrain ? terrainSampler : sampler);
                     }
                     else
                     {
@@ -283,7 +338,7 @@ sealed partial class Direct3DRenderer : IDisposable
                 context.RSSetState(selectionRaster);
                 context.OMSetDepthStencilState(selectionDepth);
                 foreach (var range in worldRanges)
-                    if (ReferenceEquals(range.Owner, selectedActor) && (categoryMask & range.Mask) != 0 && !(settings.Water && range.Water == WaterKind.Volume))
+                    if (ReferenceEquals(range.Owner, selectedActor) && (categoryMask & range.Mask) != 0 && !(settings.Water && range.Water is WaterKind.Volume or WaterKind.Backface))
                         context.Draw(range.Count, range.Start);
                 context.RSSetState(raster);
                 context.OMSetDepthStencilState(null);
@@ -381,6 +436,8 @@ sealed partial class Direct3DRenderer : IDisposable
         worldBuffer?.Dispose();
         matrixBuffer.Dispose();
         lightingBuffer.Dispose();
+        materialBuffer.Dispose();
+        skyBuffer.Dispose();
         skyVs.Dispose();
         skyPs.Dispose();
         overlayBlend.Dispose();
@@ -398,4 +455,4 @@ sealed partial class Direct3DRenderer : IDisposable
     }
 }
 
-readonly record struct SceneRange(uint Start, uint Count, int Mask, string? Texture = null, bool Terrain = false, Actor? Owner = null, WaterKind Water = WaterKind.None, Vector3 Center = default);
+readonly record struct SceneRange(uint Start, uint Count, int Mask, string? Texture = null, bool Terrain = false, Actor? Owner = null, WaterKind Water = WaterKind.None, Vector3 Center = default, string? EmissionTexture = null);

@@ -21,6 +21,34 @@ static class TriggerChecks
         Require(sphere.Shape == ZoneGeometry.Sphere && sphere.Contains(actor.Position), "Resource sphere was not decoded.");
         Require(!sphere.Contains(Vector3.Transform(new(0.8f, 0.8f, 0), sphere.Transform)), "Sphere was tested as its bounding box.");
         Require(sphere.Ray(origin, direction, out _), "Ellipsoid ray missed.");
+        using var unitBox = JsonDocument.Parse("""{"Phive/ShapeParam/Test.bgyml":{"Box":[{"HalfExtents":{"X":1,"Y":1,"Z":1}}]}}""");
+        TriggerVolume Box(Vector3 position, Vector3 scale, Vector3 rotation = default) => TriggerVolume.Read(actor with
+        {
+            Position = position,
+            Scale = scale,
+            Rotation = rotation
+        }, unitBox.RootElement).Single();
+        var outer = Box(new(0, 0, 10), new(8));
+        var inner = Box(new(0, 0, 10), Vector3.One);
+        Require(ReferenceEquals(TriggerVolume.PickSmallest([outer, inner], Vector3.Zero, Vector3.UnitZ), inner) &&
+            ReferenceEquals(TriggerVolume.PickSmallest([inner, outer], Vector3.Zero, Vector3.UnitZ), inner), "Enclosing zone intercepted the smaller nested zone.");
+        var nearEqual = Box(new(0, 0, 5), Vector3.One);
+        Require(ReferenceEquals(TriggerVolume.PickSmallest([inner, nearEqual], Vector3.Zero, Vector3.UnitZ), nearEqual), "Equal-volume zones did not use the nearest ray hit.");
+        var rotatedEqual = Box(new(0, 0, 5), Vector3.One, new(0.1f, 0.2f, 0.3f));
+        Require(ReferenceEquals(TriggerVolume.PickSmallest([inner, rotatedEqual], Vector3.Zero, Vector3.UnitZ), rotatedEqual), "Rotation rounding changed equal-volume priority.");
+        var thinRotated = Box(new(0, 0, 10), new(-4, 0.1f, 0.1f), new(0, 0, 0.7f));
+        Require(thinRotated.WorldVolume > 0 && thinRotated.WorldVolume < inner.WorldVolume &&
+            ReferenceEquals(TriggerVolume.PickSmallest([inner, thinRotated], Vector3.Zero, Vector3.UnitZ), thinRotated), "Rotated or mirrored zone size used its bounding radius instead of volume.");
+        var smallSphere = TriggerVolume.Read(actor with
+        {
+            Position = new(0, 0, 10),
+            Scale = Vector3.One,
+            Rotation = Vector3.Zero
+        }, sphereDocs.RootElement).Single();
+        Require(ReferenceEquals(TriggerVolume.PickSmallest([inner, smallSphere], Vector3.Zero, Vector3.UnitZ), smallSphere), "Sphere/box volumes were not compared consistently.");
+        var missed = Box(new(20, 0, 10), new(0.01f));
+        Require(ReferenceEquals(TriggerVolume.PickSmallest([missed, outer, inner], Vector3.Zero, Vector3.UnitZ), inner) &&
+            TriggerVolume.PickSmallest([missed], Vector3.Zero, Vector3.UnitZ) == null, "Small zones outside the click ray affected picking.");
         using var bounds = JsonDocument.Parse("""{"Phive/ShapeParam/Test.bgyml":{"AutoCalc":{"Min":{"X":-1,"Y":0,"Z":-1},"Max":{"X":1,"Y":2,"Z":1}},"Cylinder":[{}]}}""");
         Require(TriggerVolume.Read(actor, bounds.RootElement).Single().Evidence == ZoneEvidence.ResourceBounds, "Unknown cylinder was mislabeled as an exact primitive.");
         Require(TriggerVolume.Read(actor, null).Single().Evidence == ZoneEvidence.Approximate, "Missing shapes were mislabeled as decoded collision.");

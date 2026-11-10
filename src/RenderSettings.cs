@@ -7,6 +7,10 @@ sealed class RenderSettings
 {
     internal bool Lighting = true, Fog = true, Wireframe;
     internal bool Water = true, AnimateWater = true;
+    internal bool Emission = true;
+    internal bool Sky = true;
+    internal float Clouds = 0.45f;
+    internal float EmissionStrength = 1;
     internal float WaterRipples = 0.18f, WaterOpacity = 0.72f, WaterSpeed = 1;
     internal float SunAzimuth = 135, SunElevation = 45, SunStrength = 1.4f;
     internal float Ambient = 0.55f, Exposure = 1.15f, FogDistance = 2500;
@@ -29,4 +33,11 @@ sealed class RenderSettings
 struct LightingConstants
 {
     public Vector4 Sun, AmbientExposure, Camera, Sky, Water;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+struct SkyConstants
+{
+    public Matrix4x4 InverseViewProjection;
+    public Vector4 Options;
 }

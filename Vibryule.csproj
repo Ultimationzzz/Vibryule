@@ -8,13 +8,15 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
+    <ApplicationIcon>assets\vibryule.ico</ApplicationIcon>
     <Authors>Ultimation</Authors>
     <Copyright>Copyright (c) 2026 Ultimation</Copyright>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="src\*.cs" />
+    <EmbeddedResource Include="assets\vibryule.ico" LogicalName="Vibryule.AppIcon" />
     <ProjectReference Include="third_party\SpaceUI\SpaceUI.csproj" />
     <PackageReference Include="AstcSharp" Version="3.1.0" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />

@@ -3,11 +3,59 @@ namespace OotSceneViewer;
 
 static class TerrainChecks
 {
+    internal static string SignedHeightChecks()
+    {
+        byte[] Archive(float height)
+        {
+            const int start = 0x40, size = 0x66000;
+            var data = new byte[start + size];
+            void Int(int p, int value) => System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(p), value);
+            Int(0, 0x01020401);
+            Int(4, 11);
+            Int(12, 257);
+            Int(24, 257);
+            Int(0x2c, start - 0x2c);
+            Int(0x30, size);
+            for (int p = start; p < data.Length; p += 4)
+                Int(p, BitConverter.SingleToInt32Bits(height));
+            using var compressor = new ZstdSharp.Compressor();
+            byte[] compressed = compressor.Wrap(data).ToArray();
+            using var output = new MemoryStream();
+            using var writer = new BinaryWriter(output);
+            writer.Write("TARB"u8);
+            writer.Write(1);
+            writer.Write((ushort)0);
+            writer.Write((ushort)20);
+            writer.Write(data.Length);
+            writer.Write(compressed.Length);
+            writer.Write(compressed);
+            return output.ToArray();
+        }
+        foreach (float height in new[] { -0.125f, 0f, 1.25f })
+        {
+            var decoded = TerrainResource.ReadHeights(Archive(height));
+            if (decoded.Length != 257 * 257 || decoded.Any(h => h != height))
+                throw new InvalidOperationException("Float terrain heights were clamped or changed.");
+        }
+        foreach (float bad in new[] { float.NaN, float.PositiveInfinity, float.NegativeInfinity })
+        {
+            try
+            {
+                TerrainResource.ReadHeights(Archive(bad));
+                throw new InvalidOperationException("Non-finite terrain heights were accepted.");
+            }
+            catch (InvalidDataException) { }
+        }
+        return "PASS: signed/unbounded float terrain heights are preserved; NaN and infinities are rejected.";
+    }
+
     internal static string Run(string nupPath, string name)
     {
         using var nup = new NupReader(nupPath);
         CancellationToken cancel = default;
-        var descriptor = TerrainResource.ReadDescriptor(nup.ReadMember(nup.Files[$"/TerrainArc/{name}.tscb"], cancel));
+        if (!nup.Files.TryGetValue($"/TerrainArc/{name}.tscb", out var descriptorEntry))
+            throw new ArgumentException($"Unknown terrain '{name}'. Available: {string.Join(", ", nup.Files.Keys.Where(k => k.StartsWith("/TerrainArc/") && k.EndsWith(".tscb")))}");
+        var descriptor = TerrainResource.ReadDescriptor(nup.ReadMember(descriptorEntry, cancel));
         string prefix = $"/TerrainArc/{name}/";
         var tiles = TerrainResource.SelectTiles(descriptor, t => nup.Files.ContainsKey(prefix + t + ".hght"));
         if (tiles.Count == 0)
@@ -15,13 +63,13 @@ static class TerrainChecks
         var maps = tiles.ToDictionary(t => t.Name, t => TerrainResource.ReadHeights(nup.ReadMember(nup.Files[prefix + t.Name + ".hght"], cancel)));
         var regions = tiles.SelectMany(t => Enumerable.Range(0, 4).Where(q => (t.Quadrants & (1 << q)) != 0).Select(q => (X: t.X + ((q & 1) == 0 ? -1 : 1) * t.Size / 4, Z: t.Z + ((q & 2) == 0 ? -1 : 1) * t.Size / 4, Size: t.Size / 2))).ToArray();
         for (int i = 0; i < regions.Length; i++)
-        for (int j = i + 1; j < regions.Length; j++)
-        {
-            var a = regions[i];
-            var b = regions[j];
-            if ((a.Size + b.Size) / 2 - Math.Abs(a.X - b.X) > 0.001f && (a.Size + b.Size) / 2 - Math.Abs(a.Z - b.Z) > 0.001f)
-                throw new InvalidDataException("Selected terrain LOD regions overlap.");
-        }
+            for (int j = i + 1; j < regions.Length; j++)
+            {
+                var a = regions[i];
+                var b = regions[j];
+                if ((a.Size + b.Size) / 2 - Math.Abs(a.X - b.X) > 0.001f && (a.Size + b.Size) / 2 - Math.Abs(a.Z - b.Z) > 0.001f)
+                    throw new InvalidDataException("Selected terrain LOD regions overlap.");
+            }
         double maxSeam = 0;
         int edges = 0, badWeights = 0, weightPixels = 0;
         float min = float.MaxValue, max = float.MinValue;

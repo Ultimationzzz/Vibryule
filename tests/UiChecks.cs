@@ -84,9 +84,22 @@ public partial class Form1
             treeZonesOnly.Checked = true;
             if (actorNodes.Keys.Any(a => !TriggerVolume.IsCandidate(a) && !a.Name.Contains("Event", StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException("Zone/event tree filter included unrelated actors.");
-            pickZones.Checked = true;
-            if (!view.PickTriggers || !view.ShowAreaExtents || view.PickExtents)
+            areaExtents.Checked = false;
+            // This test form stays hidden; native PerformClick requires visibility.
+            typeof(Button).GetMethod("OnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(mapZoneSelection, [EventArgs.Empty]);
+            if (!view.PickTriggers || view.ShowAreaExtents || view.PickExtents || !pickZones.Checked || !selectZonesMenu.Checked)
                 throw new InvalidOperationException("Trigger picking controls did not switch selection mode.");
+            selectZonesMenu.PerformClick();
+            if (view.PickTriggers || mapZoneSelection.Active || !mapObjectSelection.Active || pickZones.Checked || selectZonesMenu.Checked)
+                throw new InvalidOperationException("Zone selection menu did not synchronize the map toggle.");
+            pickZones.Checked = true;
+            if (!mapZoneSelection.Active || mapObjectSelection.Active || !selectZonesMenu.Checked)
+                throw new InvalidOperationException("Sidebar picking mode did not synchronize the map/menu.");
+            zoneSearch.Text = "Area";
+            if (view.ShowAreaExtents)
+                throw new InvalidOperationException("Filtering hidden zones turned the overlay on.");
+            zoneSearch.Text = "";
+            areaExtents.Checked = true;
             approximateZones.Checked = false;
             if (zoneList.Items.Cast<TriggerVolume>().Any(z => z.Evidence == ZoneEvidence.Approximate))
                 throw new InvalidOperationException("Approximate-volume filter failed.");
@@ -115,6 +128,13 @@ public partial class Form1
                 throw new InvalidOperationException("Fall toggle did not filter both list and map.");
             ShowAllZones();
             Console.WriteLine($"Fall zones: {fallCount} fall-contact candidate volumes, {view.Zones.Count(z => z.FallKind.HasFlag(FallZoneKind.ItemFall))} item-fall volumes.");
+            int fogCount = view.Zones.Count(z => z.IsFog);
+            fogZones.Checked = false;
+            if (view.Zones.Count(view.ZoneMatches) != view.Zones.Count - fogCount || view.Zones.Any(z => z.IsFog && (view.ZonePickable(z) || view.ZoneHighlighted(z))) || zoneList.Items.Cast<TriggerVolume>().Any(z => z.IsFog))
+                throw new InvalidOperationException("Fog-zone filter did not exclude drawing, picking and list entries.");
+            ShowAllZones();
+            if (!fogZones.Checked || view.Zones.Count(view.ZoneMatches) != view.Zones.Count)
+                throw new InvalidOperationException("Show all did not restore fog zones.");
             view.CheckZonePicking();
             followProbe.Checked = true;
             if (!view.ProbeFollowsCamera)
@@ -131,17 +151,23 @@ sealed partial class SceneView
     internal void CheckZonePicking()
     {
         var oldSize = Size;
+        bool shown = ShowAreaExtents;
         try
         {
             Size = new Size(800, 600);
             var zone = Zones.First(z => ZoneVisible(z));
             Selected = zone.Actor;
+            if (SelectedModelActor != null)
+                throw new InvalidOperationException("Zone selection still requested a model highlight.");
             SelectedZonesOnly = true;
             FocusActor(zone.Actor);
             if (!ReferenceEquals(PickAt(new Point(400, 300)), zone.Actor))
                 throw new InvalidOperationException("Zone center ray failed to select the focused volume.");
+            ShowAreaExtents = false;
+            if (!ReferenceEquals(PickAt(new Point(400, 300)), zone.Actor) || ZoneVisible(zone) || !ZoneHighlighted(zone))
+                throw new InvalidOperationException("Hidden-zone picking or selected outline failed.");
             ZoneSearch = "__no_zone_matches__";
-            if (PickAt(new Point(400, 300)) != null)
+            if (PickAt(new Point(400, 300)) != null || ZoneHighlighted(zone))
                 throw new InvalidOperationException("Filtered-out zone was still clickable.");
             IReadOnlyList<TriggerVolume>? overlaps = null;
             void CaptureProbe(Vector3 point, IReadOnlyList<TriggerVolume> inside) => overlaps = inside;
@@ -155,11 +181,11 @@ sealed partial class SceneView
             }
             finally { ProbeChanged -= CaptureProbe; ResetProbe(); }
         }
-        finally { Size = oldSize; SelectedZonesOnly = false; ZoneSearch = ""; }
+        finally { Size = oldSize; SelectedZonesOnly = false; ZoneSearch = ""; ShowAreaExtents = shown; }
     }
     internal void CheckPicking()
     {
-        bool markers = ShowMarkers, candidates = ShowCandidates, extents = PickExtents;
+        bool markers = ShowMarkers, candidates = ShowCandidates, extents = PickExtents, triggers = PickTriggers, zones = ShowAreaExtents;
         var oldSize = Size;
         try
         {
@@ -188,12 +214,22 @@ sealed partial class SceneView
                     throw new InvalidOperationException("Viewport click did not select the ray hit.");
             }
             finally { ActorPicked -= CapturePick; }
+            PickTriggers = true;
+            ShowAreaExtents = false;
+            ZoneSearch = "__no_zone_matches__";
+            ShowMarkers = ShowCandidates = true;
+            if (PickAt(point.Value) != null)
+                throw new InvalidOperationException("Zone-only click fell back to a visible model or marker.");
+            PickTriggers = false;
+            ZoneSearch = "";
+            ShowAreaExtents = zones;
+            ShowMarkers = ShowCandidates = false;
             SetNameFilter("__no_actor_matches__", true);
             if (PickAt(point.Value) != null)
                 throw new InvalidOperationException("Hidden objects remained pickable.");
             SetNameFilter("", false);
         }
-        finally { ShowMarkers = markers; ShowCandidates = candidates; PickExtents = extents; Size = oldSize; }
+        finally { ShowMarkers = markers; ShowCandidates = candidates; PickExtents = extents; PickTriggers = triggers; ShowAreaExtents = zones; Size = oldSize; }
     }
     internal void CheckMovement()
     {

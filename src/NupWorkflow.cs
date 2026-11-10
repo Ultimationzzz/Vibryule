@@ -35,19 +35,22 @@ sealed class ScenePicker : SpaceForm
     private readonly SpaceListBox list = new() { Dock = DockStyle.Fill };
     private readonly SpaceSearchBox search = new() { Dock = DockStyle.Top, PlaceholderText = "Search scenes" };
     private readonly List<SceneOption> scenes;
+    private readonly SceneOption? current;
+    private readonly SpaceButton open = new() { Text = "Load scene", Width = 130, DialogResult = DialogResult.OK };
     public SceneOption? Selection => list.SelectedItem as SceneOption;
 
-    public ScenePicker(List<SceneOption> scenes)
+    public ScenePicker(List<SceneOption> scenes, SceneOption? current = null, string? nupName = null)
     {
         this.scenes = scenes;
+        this.current = current;
         Text = "Choose a scene";
         Width = 580;
         Height = 650;
+        MinimumSize = new Size(450, 400);
         StartPosition = FormStartPosition.CenterParent;
         Padding = new Padding(12);
-        var top = new Label { Text = "Choose a scene from your local NUP", Dock = DockStyle.Top, Height = 36, ForeColor = SpaceTheme.Text };
+        var top = new Label { Text = $"{nupName ?? "Choose a scene from your local NUP"}\n{(current == null ? $"{scenes.Count} available scenes" : "Current: " + current.Name)}", Dock = DockStyle.Top, Height = 52, ForeColor = SpaceTheme.Text, AutoEllipsis = true };
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 48, FlowDirection = FlowDirection.RightToLeft };
-        var open = new SpaceButton { Text = "Prepare scene", Width = 130, DialogResult = DialogResult.OK };
         var cancel = new SpaceButton { Text = "Cancel", Width = 100, ButtonStyle = SpaceButtonStyle.Secondary, DialogResult = DialogResult.Cancel };
         actions.Controls.Add(open);
         actions.Controls.Add(cancel);
@@ -64,11 +67,15 @@ sealed class ScenePicker : SpaceForm
     }
     private void RefreshScenes()
     {
+        var previous = Selection ?? current;
         list.BeginUpdate();
         list.Items.Clear();
         list.Items.AddRange(scenes.Where(x => x.Name.Contains(search.Text, StringComparison.OrdinalIgnoreCase) || x.Folder.Contains(search.Text, StringComparison.OrdinalIgnoreCase)).Cast<object>().ToArray());
-        if (list.Items.Count > 0)
+        if (previous != null && list.Items.Contains(previous))
+            list.SelectedItem = previous;
+        else if (list.Items.Count > 0)
             list.SelectedIndex = 0;
+        open.Enabled = Selection != null;
         list.EndUpdate();
     }
 

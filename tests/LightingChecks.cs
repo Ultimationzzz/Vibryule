@@ -14,9 +14,9 @@ static class LightingChecks
         Vertex[] overlay = [V(-1, -1, 0.8f, 0.1f, 0.2f, 1, 0.5f), V(-1, 1, 0.8f, 0.1f, 0.2f, 1, 0.5f), V(1, -1, 0.8f, 0.1f, 0.2f, 1, 0.5f)];
         renderer.SetWorld(world, [], [new(0, 3, 1)], []);
         var settings = new RenderSettings { Fog = false, Lighting = false, Exposure = 1 };
-        int[] Draw(Vertex[]? zones = null, bool xray = true, float time = 0)
+        int[] Draw(Vertex[]? zones = null, bool xray = true, float time = 0, bool gameRendering = true)
         {
-            renderer.Draw(64, 64, Matrix4x4.Identity, [], 127, false, [], settings: settings, cameraPosition: new Vector3(0, 0, 20), zoneFaces: zones, zoneXray: xray, present: false, timeSeconds: time);
+            renderer.Draw(64, 64, Matrix4x4.Identity, [], 127, false, [], gameRendering: gameRendering, settings: settings, cameraPosition: new Vector3(0, 0, 20), zoneFaces: zones, zoneXray: xray, present: false, timeSeconds: time);
             return renderer.PixelForChecks(16, 40);
         }
         var baseline = Draw();
@@ -57,7 +57,66 @@ static class LightingChecks
             WaterMaterial.Classify("River", "Surface__Mt_Water_River_Surface") == WaterKind.Surface &&
             WaterMaterial.Classify("River", "Box__Mt_Water_River_Box") == WaterKind.Volume,
             "Water detection classified scenery or failed to distinguish a volume proxy.");
-        return "PASS: GPU pixels verify lighting, haze, wireframe, zone depth/x-ray, water animation/toggle/pause/occlusion and state reset.";
+        Require(WaterMaterial.Classify("Land_HrlCastle_WaterPlane_A_01", "WaterPlane_Front__Mt_HrlCastle_WaterPlane_A_01_Front") == WaterKind.Surface &&
+            WaterMaterial.Classify("Land_HrlCastle_WaterPlane_A_01", "WaterPlane_Back__Mt_HrlCastle_WaterPlane_A_01_Back") == WaterKind.Backface &&
+            WaterMaterial.Classify("Land_HrlCastle_WaterPlane_A_01", "WaterPlane_Box__Mt_HrlCastle_WaterPlane_A_01_Box") == WaterKind.Volume &&
+            WaterMaterial.Classify("Land_HrlCastle_WaterPlane_A_01", "WaterPlane_Surface__Mt_HrlCastle_WaterPlane_A_01_Model") == WaterKind.Volume &&
+            WaterMaterial.Classify("Land_HrlCastle_Waterfall_A_01", "WaterFallMaker_B_00_0__Mt_Seal_Top") == WaterKind.Surface,
+            "Castle water parts were not classified separately from auxiliary meshes.");
+        renderer.SetWorld(world, [], [new(0, 3, 1, Water: WaterKind.Surface)], []);
+        var oneWaterLayer = Draw();
+        renderer.SetWorld(world.Concat(world).ToArray(), [], [new(0, 3, 1, Water: WaterKind.Surface), new(3, 3, 1, Water: WaterKind.Backface)], []);
+        Require(Draw().SequenceEqual(oneWaterLayer), "Companion water backface was blended twice.");
+        // Self-lit material must remain visible without any sun or ambient light.
+        string emissionPath = Path.Combine(Path.GetTempPath(), $"vibryule-emission-{Guid.NewGuid():N}.tex");
+        string albedoPath = Path.Combine(Path.GetTempPath(), $"vibryule-albedo-{Guid.NewGuid():N}.tex");
+        try
+        {
+            new BntxTexture(1, 1, Vortice.DXGI.Format.R8G8B8A8_UNorm_SRgb, 4, [255, 0, 0, 255]).Save(emissionPath);
+            new BntxTexture(1, 1, Vortice.DXGI.Format.R8G8B8A8_UNorm_SRgb, 4, [32, 32, 32, 255]).Save(albedoPath);
+            settings.Lighting = true;
+            settings.SunStrength = settings.Ambient = 0;
+            settings.Emission = true;
+            settings.EmissionStrength = 0.5f;
+            renderer.SetWorld(world, [], [new(0, 3, 1, Texture: albedoPath, EmissionTexture: emissionPath)], []);
+            var emitted = Draw();
+            Require(emitted[0] > 100 && emitted[1] < 5 && emitted[2] < 5, "Emission texture did not retain its color in darkness.");
+            settings.EmissionStrength = 2;
+            Require(Draw()[0] > emitted[0], "Emission brightness did not affect the material.");
+            settings.Emission = false;
+            Require(Draw().Take(3).Sum() < 5, "Emission toggle did not restore the unlit surface.");
+            settings.Emission = true;
+            Require(Draw(gameRendering: false).Take(3).Sum() < 5, "Solid inspection mode still emitted light.");
+            var unfogged = Draw();
+            settings.Fog = true;
+            settings.FogDistance = 1;
+            Require(!Draw().SequenceEqual(unfogged), "Emission bypassed distance haze.");
+            settings.Fog = false;
+            renderer.SetWorld(world, [], [new(0, 3, 1, EmissionTexture: emissionPath)], []);
+            Require(Draw().SequenceEqual(unfogged), "An emission map without albedo failed to render.");
+            // Draw a closer non-emissive range after the emitting range, in the same frame.
+            renderer.SetWorld(overlay.Concat(world).ToArray(), [], [new(0, 3, 1, EmissionTexture: emissionPath), new(3, 3, 1)], []);
+            Require(Draw().Take(3).Sum() < 5, "Emission leaked into the next material.");
+        }
+        finally { File.Delete(emissionPath); File.Delete(albedoPath); }
+        renderer.SetWorld([], [], [], []);
+        settings.Clouds = 0;
+        int[] Sky(Vector3 direction, Vector3 eye = default)
+        {
+            var matrix = Matrix4x4.CreateLookAt(eye, eye + direction, Vector3.UnitY) * Matrix4x4.CreatePerspectiveFieldOfView(0.8f, 1, 0.1f, 10000);
+            renderer.Draw(64, 64, matrix, [], 127, false, [], settings: settings, cameraPosition: eye, present: false);
+            return renderer.PixelForChecks(32, 32);
+        }
+        var horizon = Sky(new(0, 0.01f, -1));
+        var upper = Sky(new(0, 2, -1));
+        Require(!horizon.SequenceEqual(upper), "Sky remained fixed to the screen when pitching the camera.");
+        var translated = Sky(new(0, 2, -1), new(100, 20, 30));
+        Require(upper.Zip(translated).All(p => Math.Abs(p.First - p.Second) <= 2), "Sky translated with world position.");
+        settings.Clouds = 1;
+        Require(!Sky(new(0, 2, -1)).SequenceEqual(upper), "Cloud cover did not change the sky.");
+        settings.Sky = false;
+        Require(Sky(new(0, 0.01f, -1)).SequenceEqual(Sky(new(0, 2, -1))), "Sky toggle did not restore a plain background.");
+        return "PASS: GPU pixels verify sky pitch/translation/cloud controls, water layering/animation/occlusion, emission, lighting and state reset.";
     }
     private static void Require(bool test, string message)
     {

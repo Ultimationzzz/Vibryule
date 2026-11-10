@@ -6,12 +6,13 @@ namespace OotSceneViewer;
 public partial class Form1
 {
     private readonly SpaceToggle treeZonesOnly = Toggle("Tree: zones and events only", false);
-    private readonly SpaceToggle pickZones = Toggle("Click to select zone volumes", false);
+    private readonly SpaceToggle pickZones = Toggle("Select zones only", false);
     private readonly SpaceToggle fillZones = Toggle("Translucent zone fill", true);
     private readonly SpaceToggle zoneXray = Toggle("Show zones through walls", true);
     private readonly SpaceToggle approximateZones = Toggle("Include approximate volumes", true);
     private readonly SpaceToggle fallZones = Toggle("Death / fall candidates", true);
     private readonly SpaceToggle itemFallZones = Toggle("Item fall zones", true);
+    private readonly SpaceToggle fogZones = Toggle("Volumetric fog zones", true);
     private readonly SpaceToggle selectedZoneOnly = Toggle("Isolate selected zone", false);
     private readonly SpaceToggle followProbe = Toggle("Probe follows fly camera", false);
     private readonly SpaceSearchBox zoneSearch = new() { Width = 320, Height = 32, PlaceholderText = "Filter map zones by name…" };
@@ -86,6 +87,8 @@ public partial class Form1
         Bind(scene, wire, v => view.Rendering.Wireframe = v);
         Bind(scene, Toggle("Water shader", true), v => view.Rendering.Water = v);
         Bind(scene, Toggle("Animate water", true), v => view.Rendering.AnimateWater = v);
+        Bind(scene, Toggle("Emissive textures", true), v => view.Rendering.Emission = v);
+        Bind(scene, Toggle("Sky and clouds", true), v => view.Rendering.Sky = v);
         Section(scene, "SELECTION & OVERLAYS");
         scene.Controls.Add(extentFilter);
         scene.Controls.Add(extentMatches);
@@ -113,7 +116,7 @@ public partial class Form1
         }
 
         Section(lighting, "VIEWER LIGHTING");
-        lighting.Controls.Add(Note("Reconstructed shading using original albedo textures. Shadows and original game material effects are not simulated.", 55));
+        lighting.Controls.Add(Note("Original albedo and emission-color maps with viewer lighting. No bloom, cast shadows or original material animation.", 55));
         var light = Toggle("Directional + sky lighting", true);
         var fog = Toggle("Distance haze", true);
         Bind(lighting, light, v => view.Rendering.Lighting = v);
@@ -128,6 +131,8 @@ public partial class Form1
         Value("Sun direction (degrees)", 0, 360, 135, v => view.Rendering.SunAzimuth = v, 0);
         Value("Sun elevation (degrees)", 0, 90, 45, v => view.Rendering.SunElevation = v, 0);
         Value("Sun intensity", 0, 4, 1.4m, v => view.Rendering.SunStrength = v);
+        Value("Emission brightness", 0, 8, 1, v => view.Rendering.EmissionStrength = v);
+        Value("Cloud cover", 0, 1, 0.45m, v => view.Rendering.Clouds = v);
         Value("Sky / ground ambient", 0, 2, 0.55m, v => view.Rendering.Ambient = v);
         Value("Exposure", 0.25m, 3, 1.15m, v => view.Rendering.Exposure = v);
         Value("Haze distance (world units)", 100, 10000, 2500, v => view.Rendering.FogDistance = v, 0);
@@ -153,6 +158,7 @@ public partial class Form1
         Bind(zones, approximateZones, v => { view.ShowApproximate = v; RefreshZones(); });
         Bind(zones, fallZones, v => { view.ShowFallZones = v; RefreshZones(); });
         Bind(zones, itemFallZones, v => { view.ShowItemFallZones = v; RefreshZones(); });
+        Bind(zones, fogZones, v => { view.ShowFogZones = v; RefreshZones(); });
         zones.Controls.Add(Button("Only death / fall candidates", 300, (_, _) =>
         {
             ShowAllZones();
@@ -164,22 +170,33 @@ public partial class Form1
         zones.Controls.Add(Note("Identified from FallDown logic references. Lethal/reset behavior is unverified. Item-fall areas are separate.", 48));
         zones.Controls.Add(zoneCount);
         zones.Controls.Add(new SpaceScrollHost(zoneList) { Size = new Size(320, 145) });
-        zoneSearch.TextChanged += (_, _) => { view.ZoneSearch = zoneSearch.Text; areaExtents.Checked = true; RefreshZones(); view.Invalidate(); };
+        zoneSearch.TextChanged += (_, _) => { view.ZoneSearch = zoneSearch.Text; RefreshZones(); view.Invalidate(); };
         zoneType.SelectedIndexChanged += (_, _) =>
         {
             if (refreshingZones)
                 return;
             view.ZoneType = zoneType.SelectedIndex > 0 ? zoneType.SelectedItem?.ToString() ?? "" : "";
-            areaExtents.Checked = true;
             RefreshZones();
             view.Invalidate();
         };
         Section(zones, "APPEARANCE & PICKING");
-        Bind(zones, pickZones, v => { view.PickTriggers = v; if (v) { areaExtents.Checked = true; pickExtents.Checked = false; details.ShowTriggerTab(); } });
+        Bind(zones, pickZones, v =>
+        {
+            view.PickTriggers = v;
+            mapZoneSelection.Active = selectZonesMenu.Checked = v;
+            mapObjectSelection.Active = !v;
+            view.Cursor = v ? Cursors.Cross : Cursors.Default;
+            if (v)
+            {
+                pickExtents.Checked = false;
+                details.ShowTriggerTab();
+            }
+        });
+        zones.Controls.Add(Note("Pick zones with the overlay on or off. The smallest zone under the cursor wins. Filters still apply; objects are ignored.", 48));
         Bind(zones, fillZones, v => view.FillZones = v);
         Bind(zones, zoneXray, v => view.ZoneXray = v);
         zones.Controls.Add(Note("Cyan: resource shapes/bounds. Amber: approximate. Green: probe inside. Inspection volumes are not verified player collision.", 55));
-        zoneList.SelectedIndexChanged += (_, _) => { if (!refreshingZones && zoneList.SelectedItem is TriggerVolume volume) { SelectFromViewport(volume.Actor); details.ShowTriggerTab(); } };
+        zoneList.SelectedIndexChanged += (_, _) => { if (!refreshingZones && zoneList.SelectedItem is TriggerVolume volume) { pickZones.Checked = true; SelectFromViewport(volume.Actor); details.ShowTriggerTab(); } };
         zoneList.DoubleClick += (_, _) => { if (zoneList.SelectedItem is TriggerVolume volume) view.FocusActor(volume.Actor); };
         var actions = new FlowLayoutPanel { Width = 320, Height = 36, WrapContents = false };
         actions.Controls.Add(Button("Focus zone", 125, (_, _) => { if (SelectedZone() is { } zone) view.FocusActor(zone.Actor); }));
@@ -241,7 +258,7 @@ public partial class Form1
     private void ShowAllZones()
     {
         view.OnlyFallZones = false;
-        fallZones.Checked = itemFallZones.Checked = true;
+        fallZones.Checked = itemFallZones.Checked = fogZones.Checked = true;
         selectedZoneOnly.Checked = false;
         approximateZones.Checked = true;
         zoneSearch.Text = "";
@@ -274,6 +291,7 @@ public partial class Form1
             var zones = view.Zones.Where(view.ZoneMatches).ToArray();
             fallZones.Text = $"Death / fall candidates ({view.Zones.Where(z => z.FallKind.HasFlag(FallZoneKind.FallContact)).Select(z => z.Actor).Distinct().Count()})";
             itemFallZones.Text = $"Item fall zones ({view.Zones.Where(z => z.FallKind.HasFlag(FallZoneKind.ItemFall)).Select(z => z.Actor).Distinct().Count()})";
+            fogZones.Text = $"Volumetric fog zones ({view.Zones.Where(z => z.IsFog).Select(z => z.Actor).Distinct().Count()})";
             zoneList.BeginUpdate();
             zoneList.Items.Clear();
             zoneList.Items.AddRange(zones.Cast<object>().ToArray());

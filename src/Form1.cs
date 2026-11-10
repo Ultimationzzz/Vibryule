@@ -27,9 +27,14 @@ public partial class Form1 : SpaceForm
     private readonly Label extentMatches = new() { Width = 320, Height = 24, ForeColor = SpaceTheme.Muted };
     private readonly SpaceToggle selectedLinks = Toggle("Selected placement links", true);
     private readonly SpaceToggle bounds = Toggle("Model bounds", false);
+    private readonly SelectionModeButton mapObjectSelection = new(false);
+    private readonly SelectionModeButton mapZoneSelection = new(true);
     private readonly CancellationTokenSource workflowCancellation = new();
-    private SpaceButton nupButton = null!;
-    private SpaceButton packageButton = null!;
+    private readonly NupWorkflow nupWorkflow = new();
+    private string? loadedNupPath;
+    private List<SceneOption> availableScenes = [];
+    private SceneOption? currentNupScene;
+    private bool workflowBusy;
     private List<Actor> actors = [];
     private ActorGraph graph = new([]);
     private readonly SplitContainer objectSplit = new() { Dock = DockStyle.Fill, Size = new Size(1600, 800), SplitterWidth = 8, SplitterDistance = 300, Panel1MinSize = 220, Panel2MinSize = 700, FixedPanel = FixedPanel.Panel1, BackColor = SpaceTheme.Border };
@@ -38,28 +43,24 @@ public partial class Form1 : SpaceForm
     public Form1(string[]? initialFiles = null)
     {
         InitializeComponent();
+        using (var iconStream = typeof(Form1).Assembly.GetManifestResourceStream("Vibryule.AppIcon"))
+            if (iconStream != null)
+            {
+                using var loadedIcon = new Icon(iconStream);
+                var appIcon = (Icon)loadedIcon.Clone();
+                Icon = appIcon;
+                Disposed += (_, _) => appIcon.Dispose();
+            }
         Text = "Vibryule";
         ClientSize = new Size(1650, 950);
         MinimumSize = new Size(1250, 720);
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(12), BackColor = SpaceTheme.Background };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         Controls.Add(root);
-        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = SpaceTheme.Background };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 590));
-        var title = new Label { Dock = DockStyle.Fill, Text = "VIBRYULE   /   LOCAL SCENE", Font = new Font("Segoe UI", 14, FontStyle.Bold), ForeColor = SpaceTheme.Text, TextAlign = ContentAlignment.MiddleLeft };
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(0, 15, 0, 0) };
-        nupButton = Button("Open NUP", 100, async (_, _) => await OpenNupAsync());
-        packageButton = Button("Open package", 115, (_, _) => Open());
-        var frameButton = Button("Frame scene", 105, (_, _) => view.FrameScene());
-        var focusButton = Button("Focus object", 105, (_, _) => { if (view.Selected != null) view.FocusActor(view.Selected); });
-        var topButton = Button("Top view", 95, (_, _) => view.TopView());
-        actions.Controls.AddRange([nupButton, packageButton, frameButton, focusButton, topButton]);
-        header.Controls.Add(title, 0, 0);
-        header.Controls.Add(actions, 1, 0);
-        root.Controls.Add(header, 0, 0);
+        MainMenuStrip = BuildWindowMenu();
+        root.Controls.Add(MainMenuStrip, 0, 0);
         root.Controls.Add(objectSplit, 0, 1);
         objectSplit.Panel2.Controls.Add(inspectorSplit);
         var resizeHints = new ToolTip(components!);
@@ -77,14 +78,24 @@ public partial class Form1 : SpaceForm
         left.Controls.Add(new SpaceScrollHost(tree), 0, 2);
         left.Controls.Add(counts, 0, 3);
         objectSplit.Panel1.Controls.Add(left);
-        var viewport = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = SpaceTheme.Background, ColumnCount = 1, RowCount = 2, Margin = new Padding(0, 0, 8, 0) };
-        viewport.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        viewport.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var viewportTitle = new Label { Dock = DockStyle.Fill, Text = "  WASD  Fly   R/F  Up/down   SHIFT / CTRL  Fast/slow   DRAG  Look   WHEEL / Z/X  Speed", ForeColor = SpaceTheme.Muted, BackColor = SpaceTheme.Surface, TextAlign = ContentAlignment.MiddleLeft };
-        viewport.Controls.Add(viewportTitle, 0, 0);
-        viewport.Controls.Add(view, 0, 1);
+        var viewport = new Panel { Dock = DockStyle.Fill, BackColor = SpaceTheme.Background };
+        var selectionModes = new FlowLayoutPanel
+        {
+            Location = new Point(10, 10), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(2), Margin = Padding.Empty, WrapContents = false,
+            BackColor = SpaceTheme.Surface, BorderStyle = BorderStyle.FixedSingle
+        };
+        selectionModes.Controls.Add(mapObjectSelection);
+        selectionModes.Controls.Add(mapZoneSelection);
+        mapObjectSelection.Click += (_, _) => { pickZones.Checked = false; pickExtents.Checked = false; };
+        mapZoneSelection.Click += (_, _) => pickZones.Checked = true;
+        resizeHints.SetToolTip(mapObjectSelection, "Objects — select model surfaces and placement markers.");
+        resizeHints.SetToolTip(mapZoneSelection, "Zones — select the smallest zone under the cursor, even when overlays are hidden. Ctrl+Shift+Z switches modes.");
+        viewport.Controls.Add(view);
+        viewport.Controls.Add(selectionModes);
+        selectionModes.BringToFront();
         inspectorSplit.Panel1.Controls.Add(viewport);
-        view.FlySpeedChanged += speed => viewportTitle.Text = $"  WASD  Fly   R/F  Up/down   SHIFT / CTRL  Fast/slow   DRAG  Look   WHEEL / Z/X  Speed: {speed:F1}";
+        view.FlySpeedChanged += speed => resizeHints.SetToolTip(mapObjectSelection, $"Objects — select model surfaces and placement markers.\nFly speed: {speed:F1}. Wheel down speeds up; wheel up slows down.");
         var selectionPage = new TabPage("Selection") { BackColor = SpaceTheme.Surface, Padding = new Padding(8) };
         var displayPage = new TabPage("Display & Filters") { BackColor = SpaceTheme.Surface, Padding = new Padding(8) };
         var selectionLayout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = SpaceTheme.Surface, ColumnCount = 1, RowCount = 2 };
@@ -96,13 +107,14 @@ public partial class Form1 : SpaceForm
         displayPage.Controls.Add(BuildDisplayOptions());
         sidebarTabs.TabPages.AddRange([selectionPage, displayPage]);
         inspectorSplit.Panel2.Controls.Add(sidebarTabs);
-        status.Text = "STATIC DATA  •  Geometry is experimental; model bounds are not collision shapes.";
+        status.Text = "File → Open NUP to begin. Model bounds and inspection volumes are not verified collisions.";
         root.Controls.Add(status, 0, 2);
         filter.TextChanged += (_, _) => RefreshTree();
         tree.AfterSelect += (_, e) => { if (e.Node?.Tag is Actor actor) SelectActor(actor); };
         tree.NodeMouseDoubleClick += (_, e) => { if (e.Node?.Tag is Actor actor) view.FocusActor(actor); };
         view.ActorPicked += SelectFromViewport;
         details.Navigate += SelectFromViewport;
+        UpdateMenuState();
         if (initialFiles is { Length: > 0 })
             Shown += (_, _) => LoadScene(initialFiles);
         else
@@ -125,7 +137,8 @@ public partial class Form1 : SpaceForm
         using var dialog = new OpenFileDialog { Filter = "Scene package or placement JSON|*.json|All files|*.*", Multiselect = true, Title = "Open a prepared scene.json or placement files" };
         if (dialog.ShowDialog() != DialogResult.OK)
             return;
-        LoadScene(dialog.FileNames);
+        if (LoadScene(dialog.FileNames))
+            currentNupScene = null;
     }
     private async Task OpenNupAsync()
     {
@@ -155,16 +168,21 @@ public partial class Form1 : SpaceForm
     }
     private async Task OpenNupPathAsync(string nupPath, bool saveSelection)
     {
-        nupButton.Enabled = false;
-        packageButton.Enabled = false;
+        if (workflowBusy)
+            return;
+        workflowBusy = true;
+        UpdateMenuState();
         try
         {
-            var workflow = new NupWorkflow();
-            var progress = new Progress<string>(message => { if (!IsDisposed) status.Text = $"PREPARING  •  {message}"; });
+            var progress = PreparationProgress();
             status.Text = "Indexing your local NUP…";
-            var scenes = await workflow.ListAsync(nupPath, progress, workflowCancellation.Token);
+            var scenes = await nupWorkflow.ListAsync(nupPath, progress, workflowCancellation.Token);
+            workflowCancellation.Token.ThrowIfCancellationRequested();
             if (scenes.Count == 0)
                 throw new InvalidDataException("No supported scene placement files were found in this NUP.");
+            loadedNupPath = Path.GetFullPath(nupPath);
+            availableScenes = scenes;
+            currentNupScene = null;
             if (saveSelection)
             {
                 try
@@ -176,20 +194,42 @@ public partial class Form1 : SpaceForm
                     MessageBox.Show(this, $"The NUP opened, but its path could not be saved to config.json: {ex.Message}", "Could not save NUP path", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
             }
-            using var picker = new ScenePicker(scenes);
-            if (picker.ShowDialog(this) != DialogResult.OK || picker.Selection is not SceneOption selected)
-            {
-                status.Text = "Scene selection cancelled.";
-                return;
-            }
-            status.Text = $"Preparing {selected.Name} locally; this may take several minutes…";
-            string path = await workflow.PrepareAsync(nupPath, selected, progress, workflowCancellation.Token);
-            if (!IsDisposed)
-                LoadScene([path]);
+            await ChooseNupSceneAsync(progress);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { if (!IsDisposed) { status.Text = "Scene preparation failed."; MessageBox.Show(this, ex.Message, "Could not prepare NUP", MessageBoxButtons.OK, MessageBoxIcon.Error); } }
-        finally { if (!IsDisposed) { nupButton.Enabled = true; packageButton.Enabled = true; } }
+        finally { workflowBusy = false; if (!IsDisposed) UpdateMenuState(); }
+    }
+    private IProgress<string> PreparationProgress() => new Progress<string>(message => { if (!IsDisposed && workflowBusy) status.Text = $"PREPARING  •  {message}"; });
+    private async Task ChangeSceneAsync()
+    {
+        if (workflowBusy || loadedNupPath == null || availableScenes.Count == 0)
+            return;
+        workflowBusy = true;
+        UpdateMenuState();
+        try
+        {
+            if (!File.Exists(loadedNupPath))
+                throw new FileNotFoundException("The loaded NUP is no longer available. Use File → Open NUP to select it again.");
+            await ChooseNupSceneAsync(PreparationProgress());
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { if (!IsDisposed) { status.Text = "Could not change scene."; MessageBox.Show(this, ex.Message, "Could not change scene", MessageBoxButtons.OK, MessageBoxIcon.Error); } }
+        finally { workflowBusy = false; if (!IsDisposed) UpdateMenuState(); }
+    }
+    private async Task ChooseNupSceneAsync(IProgress<string> progress)
+    {
+        using var picker = new ScenePicker(availableScenes, currentNupScene, Path.GetFileName(loadedNupPath));
+        if (picker.ShowDialog(this) != DialogResult.OK || picker.Selection is not SceneOption selected)
+        {
+            status.Text = $"Scene selection cancelled. {availableScenes.Count} scenes available from Scene → Change Scene.";
+            return;
+        }
+        status.Text = $"Preparing {selected.Name} locally; this may take several minutes…";
+        string path = await nupWorkflow.PrepareAsync(loadedNupPath!, selected, progress, workflowCancellation.Token);
+        workflowCancellation.Token.ThrowIfCancellationRequested();
+        if (!IsDisposed && LoadScene([path]))
+            currentNupScene = selected;
     }
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
@@ -197,7 +237,7 @@ public partial class Form1 : SpaceForm
         if (!e.Cancel)
             workflowCancellation.Cancel();
     }
-    private void LoadScene(string[] paths)
+    private bool LoadScene(string[] paths)
     {
         try
         {
@@ -214,8 +254,12 @@ public partial class Form1 : SpaceForm
             details.Clear();
             view.SetNameFilter(extentFilter.Text, filterModels.Checked);
             extentMatches.Text = $"{view.NameMatchCount:N0} / {actors.Count:N0} names match · comma = OR";
+            Text = $"{scene.Name} — Vibryule";
+            UpdateMenuState();
+            return true;
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "Could not open scene", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        return false;
     }
     private void RefreshTree()
     {
@@ -395,7 +439,7 @@ sealed partial class SceneView : Control
     internal int NameMatchCount => nameMatches?.Count ?? actors.Count;
     internal bool MatchesName(Actor actor) => nameMatches == null || nameMatches.Contains(actor);
     internal bool ActorVisible(Actor actor) => (CategoryMask & SceneCategories.Get(actor.Name).Mask) != 0 && MatchesName(actor);
-    internal bool RangeVisible(SceneRange range) => !(Rendering.Water && range.Water == WaterKind.Volume) && (CategoryMask & range.Mask) != 0 && (range.Terrain ? ShowTerrain : !FilterModels || range.Owner == null || MatchesName(range.Owner));
+    internal bool RangeVisible(SceneRange range) => !(Rendering.Water && range.Water is WaterKind.Volume or WaterKind.Backface) && (CategoryMask & range.Mask) != 0 && (range.Terrain ? ShowTerrain : !FilterModels || range.Owner == null || MatchesName(range.Owner));
     internal void SetNameFilter(string text, bool filterModels)
     {
         nameFilter = text;
@@ -420,7 +464,7 @@ sealed partial class SceneView : Control
     internal readonly RenderSettings Rendering = new();
     internal bool PickTriggers, FillZones = true, ZoneXray = true, ShowApproximate = true, SelectedZonesOnly;
     internal string ZoneSearch = "", ZoneType = "";
-    internal bool ShowFallZones = true, ShowItemFallZones = true, OnlyFallZones;
+    internal bool ShowFallZones = true, ShowItemFallZones = true, ShowFogZones = true, OnlyFallZones;
     internal bool ProbeFollowsCamera;
     internal Vector3? ProbePoint;
     private Vector3? reportedProbe;
@@ -451,6 +495,7 @@ sealed partial class SceneView : Control
         return probe;
     }
     internal bool ZoneMatches(TriggerVolume zone) =>
+        (ShowFogZones || !zone.IsFog) &&
         (ShowFallZones || !zone.FallKind.HasFlag(FallZoneKind.FallContact)) &&
         (ShowItemFallZones || !zone.FallKind.HasFlag(FallZoneKind.ItemFall)) &&
         (!OnlyFallZones || zone.FallKind.HasFlag(FallZoneKind.FallContact)) &&
@@ -459,6 +504,8 @@ sealed partial class SceneView : Control
         ActorNameFilter.Matches(zone.Actor, ZoneSearch) &&
         (!SelectedZonesOnly || ReferenceEquals(Selected, zone.Actor));
     internal bool ZoneVisible(TriggerVolume zone) => ShowAreaExtents && ZoneMatches(zone);
+    internal bool ZonePickable(TriggerVolume zone) => (PickTriggers || ShowAreaExtents) && ZoneMatches(zone);
+    internal bool ZoneHighlighted(TriggerVolume zone) => ReferenceEquals(zone.Actor, Selected) && ZonePickable(zone);
     internal int AreaExtentCount => areaBoxes.Count;
     internal bool ShowLinks = true;
     internal IReadOnlyList<ActorRelationship> Relationships = [];
@@ -479,6 +526,7 @@ sealed partial class SceneView : Control
         return Matrix4x4.CreateLookAt(eye, center, Vector3.UnitY) * Matrix4x4.CreatePerspectiveFieldOfView(0.8f, aspect, 0.1f, Math.Max(10000, distance * 10));
     }
     internal Actor? Selected;
+    internal Actor? SelectedModelActor => PickTriggers ? null : Selected;
     private bool HasModel(Actor actor) => models.ContainsKey(actor.Name) && !actor.Name.Contains("FarView", StringComparison.OrdinalIgnoreCase);
     internal bool HasBoundingBox(Actor actor) => actorBounds.ContainsKey(actor);
 
@@ -532,22 +580,24 @@ sealed partial class SceneView : Control
                     if (indices.Length % 3 != 0 || indices.Any(i => i < 0 || i >= verts.Length))
                         throw new InvalidDataException("Invalid geometry indices.");
                     Vector2[]? uvs = null;
-                    string? texture = null;
-                    if (shape.TryGetProperty("texture", out var textureValue) && shape.TryGetProperty("uv", out var uvValue))
+                    string? texture = null, emission = null;
+                    if (shape.TryGetProperty("uv", out var uvValue))
                     {
-                        var filename = textureValue.GetString();
-                        if (filename != null && Path.GetFileName(filename) == filename && filename.EndsWith(".tex", StringComparison.OrdinalIgnoreCase))
+                        uvs = uvValue.EnumerateArray().Select(v => new Vector2(v[0].GetSingle(), v[1].GetSingle())).ToArray();
+                        if (uvs.Length != verts.Length)
+                            uvs = null;
+                        string? TexturePath(string key)
                         {
+                            if (uvs == null || !shape.TryGetProperty(key, out var value))
+                                return null;
+                            var filename = value.GetString();
+                            if (filename == null || Path.GetFileName(filename) != filename || !filename.EndsWith(".tex", StringComparison.OrdinalIgnoreCase))
+                                return null;
                             var candidate = Path.Combine(directory, filename);
-                            if (File.Exists(candidate))
-                            {
-                                uvs = uvValue.EnumerateArray().Select(v => new Vector2(v[0].GetSingle(), v[1].GetSingle())).ToArray();
-                                if (uvs.Length == verts.Length)
-                                    texture = candidate;
-                                else
-                                    uvs = null;
-                            }
+                            return File.Exists(candidate) ? candidate : null;
                         }
+                        texture = TexturePath("texture");
+                        emission = TexturePath("emissionTexture");
                     }
                     Vector3[]? normals = null;
                     if (shape.TryGetProperty("normals", out var normalValue))
@@ -556,7 +606,7 @@ sealed partial class SceneView : Control
                         if (normals.Length != verts.Length)
                             normals = null;
                     }
-                    shapes.Add(new ModelShape(shape.GetProperty("shape").GetString() ?? "", verts, indices, uvs, texture, normals));
+                    shapes.Add(new ModelShape(shape.GetProperty("shape").GetString() ?? "", verts, indices, uvs, texture, normals, emission));
                 }
                 if (shapes.Count > 0)
                     models[name] = shapes;
@@ -651,7 +701,7 @@ sealed partial class SceneView : Control
                     }
                     if (cursor > shapeStart)
                         ranges.Add(new SceneRange((uint)shapeStart, (uint)(cursor - shapeStart), category.Mask, shape.Texture, Owner: actor,
-                            Water: WaterMaterial.Classify(actor.Name, shape.Name), Center: (transformed.Aggregate(Vector3.Min) + transformed.Aggregate(Vector3.Max)) / 2));
+                            Water: WaterMaterial.Classify(actor.Name, shape.Name), Center: (transformed.Aggregate(Vector3.Min) + transformed.Aggregate(Vector3.Max)) / 2, EmissionTexture: shape.EmissionTexture));
                 }
                 if (float.IsFinite(min.X) && float.IsFinite(max.X))
                 {
@@ -716,7 +766,9 @@ sealed partial class SceneView : Control
     {
         if (Width <= 0 || Height <= 0 || !ClientRectangle.Contains(point) || !ScenePicking.Ray(point, ClientSize, ViewProjection((float)Width / Height), out var origin, out var direction))
             return null;
-        if (PickExtents || PickTriggers)
+        if (PickTriggers)
+            return TriggerVolume.PickSmallest(areaBoxes.Where(ZonePickable), origin, direction)?.Actor;
+        if (PickExtents)
         {
             Actor? selected = null;
             float best = float.PositiveInfinity;
@@ -731,13 +783,13 @@ sealed partial class SceneView : Control
                     selected = actor;
                 }
             }
-            if (ShowBounds && !PickTriggers)
+            if (ShowBounds)
                 foreach (var pair in actorBounds)
                     Consider(pair.Key, origin, direction, pair.Value.Min, pair.Value.Max);
             if (ShowAreaExtents)
                 foreach (var box in areaBoxes)
                 {
-                    if (ZoneVisible(box) && box.Ray(origin, direction, out float hit) && hit < best)
+                    if (ZonePickable(box) && box.Ray(origin, direction, out float hit) && hit < best)
                     {
                         best = hit;
                         selected = box.Actor;
@@ -745,8 +797,6 @@ sealed partial class SceneView : Control
                 }
             if (selected != null)
                 return selected;
-            if (PickTriggers)
-                return null;
         }
         else
         {
@@ -992,9 +1042,9 @@ sealed partial class SceneView : Control
                 if (FillZones)
                     zoneFaces.AddRange(zone.Faces);
             }
-        if (Selected != null && (ActorVisible(Selected) || areaBoxes.Any(z => ReferenceEquals(z.Actor, Selected) && ZoneVisible(z))))
+        if (Selected != null && (ActorVisible(Selected) || areaBoxes.Any(ZoneHighlighted)))
         {
-            foreach (var area in areaBoxes.Where(b => ReferenceEquals(b.Actor, Selected) && ZoneVisible(b)))
+            foreach (var area in areaBoxes.Where(ZoneHighlighted))
                 foreach (var line in area.Lines)
                 {
                     var v = line;
@@ -1003,7 +1053,7 @@ sealed partial class SceneView : Control
                     v.B = 0.1f;
                     selectionLines.Add(v);
                 }
-            if (actorBounds.TryGetValue(Selected, out var selectedExtent))
+            if (SelectedModelActor != null && actorBounds.TryGetValue(SelectedModelActor, out var selectedExtent))
                 selectionLines.AddRange(BoxLines(selectedExtent.Min, selectedExtent.Max, 1, 0.72f, 0.2f));
             if (ShowLinks)
                 foreach (var link in Relationships)
@@ -1016,8 +1066,8 @@ sealed partial class SceneView : Control
                         selectionLines.Add(new Vertex(b.X, b.Y, b.Z, r, g, 1, 1));
                     }
         }
-        renderer.Draw(Width, Height, matrix, vertices.ToArray(), CategoryMask, ShowBounds, selectionLines.ToArray(), GameRendering, ShowTerrain, nameMatches, FilterModels, Selected, Rendering, CameraEye(), zoneFaces.ToArray(), zoneLines.ToArray(), ZoneXray);
+        renderer.Draw(Width, Height, matrix, vertices.ToArray(), CategoryMask, ShowBounds, selectionLines.ToArray(), GameRendering, ShowTerrain, nameMatches, FilterModels, SelectedModelActor, Rendering, CameraEye(), zoneFaces.ToArray(), zoneLines.ToArray(), ZoneXray);
     }
 }
 
-record ModelShape(string Name, Vector3[] Vertices, int[] Indices, Vector2[]? Uvs, string? Texture, Vector3[]? Normals = null);
+record ModelShape(string Name, Vector3[] Vertices, int[] Indices, Vector2[]? Uvs, string? Texture, Vector3[]? Normals = null, string? EmissionTexture = null);

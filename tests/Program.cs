@@ -12,10 +12,16 @@ static class Program
             Application.SetColorMode(SystemColorMode.Dark);
             Console.WriteLine(SelectionChecks.Run());
             using (var empty = new Form1())
+            {
                 empty.CheckEmptyStartup();
+                empty.CheckWindowMenu();
+            }
             Console.WriteLine("PASS: empty startup has no bundled scene.");
+            Console.WriteLine("PASS: themed menu, retained NUP session, current scene selection, chooser search and busy state.");
             Console.WriteLine(ScrollChecks.Run());
             Console.WriteLine(TriggerChecks.Run());
+            Console.WriteLine(TerrainChecks.SignedHeightChecks());
+            Console.WriteLine(BoneChecks.Run());
             Console.WriteLine(LightingChecks.Run());
             if (args.Length == 2 && args[0] == "--scene")
             {
@@ -27,6 +33,7 @@ static class Program
                 Console.WriteLine($"Scene logic: {input.LogicGroups?.Count ?? 0} modules, {input.Actors.Count(a => graph.Groups(a).Count > 0)} referenced actors.");
                 using var view = new SceneView { SuppressRendering = true };
                 view.SetActors(input.Actors, input.GeometryDirectory, graph);
+                Console.WriteLine($"Emission: {view.WorldRanges.Count(r => r.EmissionTexture != null)} material ranges with original emission-color maps.");
                 Console.WriteLine($"Water materials: {view.WorldRanges.Count(r => r.Water == WaterKind.Surface)} surfaces, {view.WorldRanges.Count(r => r.Water == WaterKind.Waterfall)} waterfalls, {view.WorldRanges.Count(r => r.Water == WaterKind.Volume)} volume proxies.");
                 using var host = new Form { ClientSize = new Size(640, 480), ShowInTaskbar = false };
                 using var renderer = new Direct3DRenderer(host.Handle);
