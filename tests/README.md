@@ -1,6 +1,6 @@
 # Checks
 
-Run the synthetic selection, filtering and inspector checks on Windows:
+Run the selection, filtering, inspector, themed scrollbar and trigger-volume checks on Windows with Direct3D 11 available:
 
 ```powershell
 dotnet run --project tests/Vibryule.Checks.csproj
@@ -14,4 +14,6 @@ dotnet run --project tests/Vibryule.Checks.csproj -- --scene "local-cache/path/s
 dotnet run --project tests/Vibryule.Checks.csproj -- --terrain "game.nup" HyruleField
 ```
 
-Scene checks exercise hierarchy, filters, picking, camera movement and live Direct3D rendering. Terrain checks validate tile heights, LOD coverage and shared edges. Keep assets, caches and test output outside the source repository.
+The default checks also render offscreen pixels to verify lighting, exposure, haze, wireframe, translucent zone depth/x-ray and graphics-state reset. They create native control handles but do not automate the desktop.
+
+Scene checks exercise hierarchy, zone filters/picking, logic references, camera movement and Direct3D rendering with local models, textures and zone overlays. Terrain checks validate tile heights, LOD coverage and shared edges. Keep assets, caches and test output outside the source repository.

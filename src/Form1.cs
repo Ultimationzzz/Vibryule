@@ -12,18 +12,19 @@ public partial class Form1 : SpaceForm
     private readonly SpaceSearchBox filter = new() { Dock = DockStyle.Fill, PlaceholderText = "Search objects or types" };
     private readonly Label status = new() { AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = SpaceTheme.Muted };
     private readonly ActorInspector details = new() { Dock = DockStyle.Fill };
+    private readonly SpaceTabControl sidebarTabs = new() { Dock = DockStyle.Fill };
     private readonly Label counts = new() { AutoSize = false, Dock = DockStyle.Fill, ForeColor = SpaceTheme.Muted, TextAlign = ContentAlignment.MiddleLeft };
     private readonly Dictionary<Actor, TreeNode> actorNodes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<int, SpaceCheckBox> categoryControls = [];
     private readonly SpaceToggle markers = Toggle("Placement markers", false);
-    private readonly SpaceToggle candidates = Toggle("Area / event candidates", true);
-    private readonly SpaceToggle areaExtents = Toggle("Area extents (approximate)", true);
-    private readonly SpaceToggle gameRendering = Toggle("Game textures + lighting", true);
+    private readonly SpaceToggle candidates = Toggle("Area / event candidates", false);
+    private readonly SpaceToggle areaExtents = Toggle("Zone volumes", false);
+    private readonly SpaceToggle gameRendering = Toggle("Original textures", true);
     private readonly SpaceToggle terrain = Toggle("Terrain surface", true);
-    private readonly SpaceSearchBox extentFilter = new() { Width = 350, Height = 32, PlaceholderText = "Extent names: Area, Tree, placement name…" };
+    private readonly SpaceSearchBox extentFilter = new() { Width = 320, Height = 32, PlaceholderText = "Extent names: Area, Tree, placement name…" };
     private readonly SpaceToggle filterModels = Toggle("Also filter models", false);
     private readonly SpaceToggle pickExtents = Toggle("Pick extents instead of surfaces", false);
-    private readonly Label extentMatches = new() { Width = 350, Height = 24, ForeColor = SpaceTheme.Muted };
+    private readonly Label extentMatches = new() { Width = 320, Height = 24, ForeColor = SpaceTheme.Muted };
     private readonly SpaceToggle selectedLinks = Toggle("Selected placement links", true);
     private readonly SpaceToggle bounds = Toggle("Model bounds", false);
     private readonly CancellationTokenSource workflowCancellation = new();
@@ -31,6 +32,8 @@ public partial class Form1 : SpaceForm
     private SpaceButton packageButton = null!;
     private List<Actor> actors = [];
     private ActorGraph graph = new([]);
+    private readonly SplitContainer objectSplit = new() { Dock = DockStyle.Fill, Size = new Size(1600, 800), SplitterWidth = 8, SplitterDistance = 300, Panel1MinSize = 220, Panel2MinSize = 700, FixedPanel = FixedPanel.Panel1, BackColor = SpaceTheme.Border };
+    private readonly SplitContainer inspectorSplit = new() { Dock = DockStyle.Fill, Size = new Size(1292, 800), SplitterWidth = 8, SplitterDistance = 884, Panel1MinSize = 300, Panel2MinSize = 380, FixedPanel = FixedPanel.Panel2, BackColor = SpaceTheme.Border };
 
     public Form1(string[]? initialFiles = null)
     {
@@ -46,7 +49,7 @@ public partial class Form1 : SpaceForm
         var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = SpaceTheme.Background };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 590));
-        var title = new Label { Dock = DockStyle.Fill, Text = "VIBYRULE   /   LOCAL SCENE", Font = new Font("Segoe UI", 14, FontStyle.Bold), ForeColor = SpaceTheme.Text, TextAlign = ContentAlignment.MiddleLeft };
+        var title = new Label { Dock = DockStyle.Fill, Text = "VIBRYULE   /   LOCAL SCENE", Font = new Font("Segoe UI", 14, FontStyle.Bold), ForeColor = SpaceTheme.Text, TextAlign = ContentAlignment.MiddleLeft };
         var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(0, 15, 0, 0) };
         nupButton = Button("Open NUP", 100, async (_, _) => await OpenNupAsync());
         packageButton = Button("Open package", 115, (_, _) => Open());
@@ -57,11 +60,13 @@ public partial class Form1 : SpaceForm
         header.Controls.Add(title, 0, 0);
         header.Controls.Add(actions, 1, 0);
         root.Controls.Add(header, 0, 0);
-        var columns = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = SpaceTheme.Background };
-        columns.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
-        columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        columns.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 400));
-        root.Controls.Add(columns, 0, 1);
+        root.Controls.Add(objectSplit, 0, 1);
+        objectSplit.Panel2.Controls.Add(inspectorSplit);
+        var resizeHints = new ToolTip(components!);
+        resizeHints.SetToolTip(objectSplit, "Drag to resize the object panel. Double-click to reset.");
+        resizeHints.SetToolTip(inspectorSplit, "Drag to resize the inspector panel. Double-click to reset.");
+        objectSplit.MouseDoubleClick += (_, _) => objectSplit.SplitterDistance = 300;
+        inspectorSplit.MouseDoubleClick += (_, _) => inspectorSplit.SplitterDistance = Math.Max(inspectorSplit.Panel1MinSize, inspectorSplit.Width - inspectorSplit.SplitterWidth - 400);
         var left = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = SpaceTheme.Surface, ColumnCount = 1, RowCount = 4, Padding = new Padding(12), Margin = new Padding(0, 0, 8, 0) };
         left.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         left.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
@@ -71,68 +76,26 @@ public partial class Form1 : SpaceForm
         left.Controls.Add(filter, 0, 1);
         left.Controls.Add(new SpaceScrollHost(tree), 0, 2);
         left.Controls.Add(counts, 0, 3);
-        columns.Controls.Add(left, 0, 0);
+        objectSplit.Panel1.Controls.Add(left);
         var viewport = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = SpaceTheme.Background, ColumnCount = 1, RowCount = 2, Margin = new Padding(0, 0, 8, 0) };
         viewport.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         viewport.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var viewportTitle = new Label { Dock = DockStyle.Fill, Text = "  WASD  Fly   R/F  Up/down   SHIFT / CTRL  Fast/slow   DRAG  Look   WHEEL / Z/X  Speed", ForeColor = SpaceTheme.Muted, BackColor = SpaceTheme.Surface, TextAlign = ContentAlignment.MiddleLeft };
         viewport.Controls.Add(viewportTitle, 0, 0);
         viewport.Controls.Add(view, 0, 1);
-        columns.Controls.Add(viewport, 1, 0);
+        inspectorSplit.Panel1.Controls.Add(viewport);
         view.FlySpeedChanged += speed => viewportTitle.Text = $"  WASD  Fly   R/F  Up/down   SHIFT / CTRL  Fast/slow   DRAG  Look   WHEEL / Z/X  Speed: {speed:F1}";
-        var side = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = SpaceTheme.Surface, ColumnCount = 1, RowCount = 5, Padding = new Padding(12) };
-        side.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-        side.RowStyles.Add(new RowStyle(SizeType.Percent, 45));
-        side.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-        side.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-        side.RowStyles.Add(new RowStyle(SizeType.Percent, 55));
-        side.Controls.Add(Heading("SELECTION"), 0, 0);
-        side.Controls.Add(details, 0, 1);
-        side.Controls.Add(Button("Inspect placement data", 210, (_, _) => InspectSelected()), 0, 2);
-        side.Controls.Add(Heading("DISPLAY & FILTERS"), 0, 3);
-        var filters = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, BackColor = SpaceTheme.Surface };
-        filters.Controls.Add(extentFilter);
-        filters.Controls.Add(extentMatches);
-        filters.Controls.Add(filterModels);
-        filters.Controls.Add(pickExtents);
-        void ApplyNameFilter()
-        {
-            view.SetNameFilter(extentFilter.Text, filterModels.Checked);
-            extentMatches.Text = $"{view.NameMatchCount:N0} / {actors.Count:N0} names match · comma = OR";
-        }
-        extentFilter.TextChanged += (_, _) => ApplyNameFilter();
-        filterModels.CheckedChanged += (_, _) => ApplyNameFilter();
-        pickExtents.Width = 350;
-        pickExtents.CheckedChanged += (_, _) => { view.PickExtents = pickExtents.Checked; if (pickExtents.Checked) bounds.Checked = true; };
-        // Event handlers below are attached after each control is constructed.
-        filters.Controls.Add(markers);
-        markers.CheckedChanged += (_, _) => { view.ShowMarkers = markers.Checked; view.Invalidate(); };
-        filters.Controls.Add(candidates);
-        candidates.CheckedChanged += (_, _) => { view.ShowCandidates = candidates.Checked; view.Invalidate(); };
-        filters.Controls.Add(areaExtents);
-        areaExtents.CheckedChanged += (_, _) => { view.ShowAreaExtents = areaExtents.Checked; view.Invalidate(); };
-        filters.Controls.Add(gameRendering);
-        gameRendering.CheckedChanged += (_, _) => { view.GameRendering = gameRendering.Checked; view.Invalidate(); };
-        filters.Controls.Add(terrain);
-        terrain.CheckedChanged += (_, _) => { view.ShowTerrain = terrain.Checked; view.Invalidate(); };
-        filters.Controls.Add(selectedLinks);
-        selectedLinks.CheckedChanged += (_, _) => { view.ShowLinks = selectedLinks.Checked; view.Invalidate(); };
-        filters.Controls.Add(bounds);
-        bounds.CheckedChanged += (_, _) => { view.ShowBounds = bounds.Checked; view.Invalidate(); };
-        var collision = Toggle("Collision shapes", false);
-        collision.Enabled = false;
-        filters.Controls.Add(collision);
-        filters.Controls.Add(new Label { Text = "Collision data not decoded", ForeColor = SpaceTheme.Muted, Width = 220, Height = 26 });
-        filters.Controls.Add(new Label { Text = "NAME-BASED CATEGORIES", ForeColor = SpaceTheme.Accent, Width = 220, Height = 30, TextAlign = ContentAlignment.BottomLeft });
-        foreach (var category in SceneCategories.All)
-        {
-            var checkbox = new SpaceCheckBox { Text = category.Name, UseMnemonic = false, Checked = true, AutoSize = false, Width = 220, Height = 28, Tag = category.Mask };
-            checkbox.CheckedChanged += (_, _) => { var bit = (int)checkbox.Tag; view.CategoryMask = checkbox.Checked ? view.CategoryMask | bit : view.CategoryMask & ~bit; view.Invalidate(); };
-            categoryControls[category.Mask] = checkbox;
-            filters.Controls.Add(checkbox);
-        }
-        side.Controls.Add(new SpaceScrollHost(filters), 0, 4);
-        columns.Controls.Add(side, 2, 0);
+        var selectionPage = new TabPage("Selection") { BackColor = SpaceTheme.Surface, Padding = new Padding(8) };
+        var displayPage = new TabPage("Display & Filters") { BackColor = SpaceTheme.Surface, Padding = new Padding(8) };
+        var selectionLayout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = SpaceTheme.Surface, ColumnCount = 1, RowCount = 2 };
+        selectionLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        selectionLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        selectionLayout.Controls.Add(details, 0, 0);
+        selectionLayout.Controls.Add(Button("Inspect placement data", 210, (_, _) => InspectSelected()), 0, 1);
+        selectionPage.Controls.Add(selectionLayout);
+        displayPage.Controls.Add(BuildDisplayOptions());
+        sidebarTabs.TabPages.AddRange([selectionPage, displayPage]);
+        inspectorSplit.Panel2.Controls.Add(sidebarTabs);
         status.Text = "STATIC DATA  •  Geometry is experimental; model bounds are not collision shapes.";
         root.Controls.Add(status, 0, 2);
         filter.TextChanged += (_, _) => RefreshTree();
@@ -240,10 +203,14 @@ public partial class Form1 : SpaceForm
         {
             var scene = SceneLoader.ReadScene(paths);
             actors = scene.Actors;
-            graph = new ActorGraph(actors, scene.ActorMetadata);
-            view.SetActors(actors, scene.GeometryDirectory);
+            graph = new ActorGraph(actors, scene.ActorMetadata, scene.LogicGroups);
+            view.SetActors(actors, scene.GeometryDirectory, graph);
+            PopulateZoneTypes();
+            followProbe.Checked = false;
+            ResetProbePreview();
+            RefreshZones();
             RefreshTree();
-            status.Text = $"{scene.Name}  •  STATIC DATA  •  {actors.Count:N0} placements  •  {view.ModeledCount:N0} model matches  •  {view.TerrainTileCount} terrain tiles  •  Collision not decoded";
+            status.Text = $"{scene.Name}  •  {actors.Count:N0} placements  •  {view.ModeledCount:N0} models  •  {view.TerrainTileCount} terrain tiles  •  {view.AreaExtentCount:N0} inspection volumes";
             details.Clear();
             view.SetNameFilter(extentFilter.Text, filterModels.Checked);
             extentMatches.Text = $"{view.NameMatchCount:N0} / {actors.Count:N0} names match · comma = OR";
@@ -255,7 +222,7 @@ public partial class Form1 : SpaceForm
         tree.BeginUpdate();
         tree.Nodes.Clear();
         actorNodes.Clear();
-        var filtered = actors.Where(a => a.Name.Contains(filter.Text, StringComparison.OrdinalIgnoreCase) || a.Raw.GetRawText().Contains(filter.Text, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var filtered = actors.Where(a => (!treeZonesOnly.Checked || TriggerVolume.IsCandidate(a) || a.Name.Contains("Event", StringComparison.OrdinalIgnoreCase)) && (a.Name.Contains(filter.Text, StringComparison.OrdinalIgnoreCase) || a.Raw.GetRawText().Contains(filter.Text, StringComparison.OrdinalIgnoreCase))).ToArray();
         foreach (var group in filtered.GroupBy(a => SceneCategories.Get(a.Name)).OrderBy(g => g.Key.Order))
         {
             var root = new TreeNode($"{group.Key.Name}  ({group.Count():N0})");
@@ -284,6 +251,9 @@ public partial class Form1 : SpaceForm
         view.Relationships = graph.Links(actor);
         view.Invalidate();
         details.ShowActor(actor, graph);
+        RefreshZones();
+        if (view.PickTriggers)
+            details.ShowTriggerTab();
     }
     private void SelectFromViewport(Actor? actor)
     {
@@ -297,7 +267,10 @@ public partial class Form1 : SpaceForm
             return;
         }
         if (!actorNodes.ContainsKey(actor))
+        {
+            treeZonesOnly.Checked = false;
             filter.Text = "";
+        }
         SelectActor(actor);
         if (actorNodes.TryGetValue(actor, out var node))
         {
@@ -318,7 +291,7 @@ public partial class Form1 : SpaceForm
     }
 }
 
-record SceneInput(string Name, List<Actor> Actors, string? GeometryDirectory, IReadOnlyDictionary<string, JsonElement>? ActorMetadata = null);
+record SceneInput(string Name, List<Actor> Actors, string? GeometryDirectory, IReadOnlyDictionary<string, JsonElement>? ActorMetadata = null, IReadOnlyList<JsonElement>? LogicGroups = null);
 static class SceneLoader
 {
     internal static SceneInput ReadScene(string[] paths)
@@ -350,17 +323,21 @@ static class SceneLoader
                     using var metadataFile = JsonDocument.Parse(File.ReadAllText(Resolve(metadataPath.GetString()!)));
                     metadata = metadataFile.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone(), StringComparer.Ordinal);
                 }
-                return new SceneInput(root.GetProperty("name").GetString() ?? "Scene", ReadActors(files), geometry, metadata);
+                var logic = new List<JsonElement>();
+                return new SceneInput(root.GetProperty("name").GetString() ?? "Scene", ReadActors(files, logic), geometry, metadata, logic);
             }
         }
-        return new SceneInput("Placement files", ReadActors(paths), null);
+        var groups = new List<JsonElement>();
+        return new SceneInput("Placement files", ReadActors(paths, groups), null, LogicGroups: groups);
     }
-    internal static List<Actor> ReadActors(string[] paths)
+    internal static List<Actor> ReadActors(string[] paths, List<JsonElement>? logicGroups = null)
     {
         var loaded = new List<Actor>();
         foreach (var path in paths)
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            if (logicGroups != null && doc.RootElement.TryGetProperty("AiGroups", out var groups) && groups.ValueKind == JsonValueKind.Array)
+                logicGroups.AddRange(groups.EnumerateArray().Select(g => g.Clone()));
             foreach (var item in doc.RootElement.GetProperty("Actors").EnumerateArray())
             {
                 if (!item.TryGetProperty("Gyaml", out var name) || !item.TryGetProperty("Translate", out var position) || position.GetArrayLength() != 3)
@@ -406,6 +383,7 @@ sealed partial class SceneView : Control
     private Point previous;
     private Point mouseDown;
     private readonly System.Windows.Forms.Timer movementTimer = new() { Interval = 16 };
+    private readonly System.Windows.Forms.Timer animationTimer = new() { Interval = 33 };
     private int movementKeys;
     private long previousMovementTick;
     internal event Action<Actor?>? ActorPicked;
@@ -417,7 +395,7 @@ sealed partial class SceneView : Control
     internal int NameMatchCount => nameMatches?.Count ?? actors.Count;
     internal bool MatchesName(Actor actor) => nameMatches == null || nameMatches.Contains(actor);
     internal bool ActorVisible(Actor actor) => (CategoryMask & SceneCategories.Get(actor.Name).Mask) != 0 && MatchesName(actor);
-    internal bool RangeVisible(SceneRange range) => (CategoryMask & range.Mask) != 0 && (range.Terrain ? ShowTerrain : !FilterModels || range.Owner == null || MatchesName(range.Owner));
+    internal bool RangeVisible(SceneRange range) => !(Rendering.Water && range.Water == WaterKind.Volume) && (CategoryMask & range.Mask) != 0 && (range.Terrain ? ShowTerrain : !FilterModels || range.Owner == null || MatchesName(range.Owner));
     internal void SetNameFilter(string text, bool filterModels)
     {
         nameFilter = text;
@@ -432,12 +410,55 @@ sealed partial class SceneView : Control
     private SceneRange[] worldRanges = [], boxRanges = [];
     private readonly Dictionary<Actor, (Vector3 Min, Vector3 Max)> actorBounds = new(ReferenceEqualityComparer.Instance);
     internal bool ShowMarkers;
-    internal bool ShowCandidates = true;
-    internal bool ShowAreaExtents = true;
+    internal bool ShowCandidates;
+    internal bool ShowAreaExtents;
     internal bool GameRendering = true;
     internal bool ShowTerrain = true;
     internal int TerrainTileCount;
-    private readonly List<(Actor Actor, Vertex[] Lines)> areaBoxes = [];
+    private readonly List<TriggerVolume> areaBoxes = [];
+    internal IReadOnlyList<TriggerVolume> Zones => areaBoxes;
+    internal readonly RenderSettings Rendering = new();
+    internal bool PickTriggers, FillZones = true, ZoneXray = true, ShowApproximate = true, SelectedZonesOnly;
+    internal string ZoneSearch = "", ZoneType = "";
+    internal bool ShowFallZones = true, ShowItemFallZones = true, OnlyFallZones;
+    internal bool ProbeFollowsCamera;
+    internal Vector3? ProbePoint;
+    private Vector3? reportedProbe;
+    private IReadOnlyList<TriggerVolume> probeInside = [];
+    private long probeReportTime;
+    internal event Action<Vector3, IReadOnlyList<TriggerVolume>>? ProbeChanged;
+    internal void ResetProbe()
+    {
+        ProbeFollowsCamera = false;
+        ProbePoint = reportedProbe = null;
+        probeInside = [];
+        probeReportTime = 0;
+        Invalidate();
+    }
+    internal Vector3? UpdateProbe()
+    {
+        Vector3? probe = ProbeFollowsCamera ? CameraEye() : ProbePoint;
+        if (probe is not Vector3 point)
+            return null;
+        var inside = areaBoxes.Where(z => ZoneVisible(z) && z.Contains(point)).ToArray();
+        if (reportedProbe == null || (reportedProbe != point && Environment.TickCount64 - probeReportTime >= 100) || !inside.SequenceEqual(probeInside))
+        {
+            reportedProbe = point;
+            probeReportTime = Environment.TickCount64;
+            probeInside = inside;
+            ProbeChanged?.Invoke(point, inside);
+        }
+        return probe;
+    }
+    internal bool ZoneMatches(TriggerVolume zone) =>
+        (ShowFallZones || !zone.FallKind.HasFlag(FallZoneKind.FallContact)) &&
+        (ShowItemFallZones || !zone.FallKind.HasFlag(FallZoneKind.ItemFall)) &&
+        (!OnlyFallZones || zone.FallKind.HasFlag(FallZoneKind.FallContact)) &&
+        (ShowApproximate || zone.Evidence != ZoneEvidence.Approximate) &&
+        (ZoneType.Length == 0 || string.Equals(zone.Actor.Name, ZoneType, StringComparison.Ordinal)) &&
+        ActorNameFilter.Matches(zone.Actor, ZoneSearch) &&
+        (!SelectedZonesOnly || ReferenceEquals(Selected, zone.Actor));
+    internal bool ZoneVisible(TriggerVolume zone) => ShowAreaExtents && ZoneMatches(zone);
     internal int AreaExtentCount => areaBoxes.Count;
     internal bool ShowLinks = true;
     internal IReadOnlyList<ActorRelationship> Relationships = [];
@@ -465,6 +486,12 @@ sealed partial class SceneView : Control
     {
         SetStyle(ControlStyles.Opaque | ControlStyles.AllPaintingInWmPaint | ControlStyles.Selectable, true);
         TabStop = true;
+        animationTimer.Tick += (_, _) =>
+        {
+            if (!SuppressRendering && Visible && Rendering.Water && Rendering.AnimateWater && worldRanges.Any(r => r.Water is WaterKind.Surface or WaterKind.Waterfall))
+                Invalidate();
+        };
+        animationTimer.Start();
         movementTimer.Tick += (_, _) =>
         {
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -538,7 +565,7 @@ sealed partial class SceneView : Control
         }
         return models;
     }
-    public void SetActors(List<Actor> data, string? geometryDirectory)
+    public void SetActors(List<Actor> data, string? geometryDirectory, ActorGraph? graph = null)
     {
         if (!string.Equals(modelDirectory, geometryDirectory, StringComparison.OrdinalIgnoreCase))
         {
@@ -549,19 +576,10 @@ sealed partial class SceneView : Control
         Selected = null;
         Relationships = [];
         areaBoxes.Clear();
-        foreach (var actor in data.Where(a => a.Name.Contains("Area", StringComparison.OrdinalIgnoreCase) && a.Raw.TryGetProperty("Scale", out _)))
-        {
-            var transform = Matrix4x4.CreateScale(actor.Scale) * Matrix4x4.CreateRotationX(actor.Rotation.X) * Matrix4x4.CreateRotationY(actor.Rotation.Y) * Matrix4x4.CreateRotationZ(actor.Rotation.Z) * Matrix4x4.CreateTranslation(actor.Position);
-            var lines = BoxLines(-Vector3.One, Vector3.One, 0.9f, 0.25f, 0.85f);
-            for (int i = 0; i < lines.Length; i++)
-            {
-                var p = Vector3.Transform(new Vector3(lines[i].X, lines[i].Y, lines[i].Z), transform);
-                lines[i].X = p.X;
-                lines[i].Y = p.Y;
-                lines[i].Z = p.Z;
-            }
-            areaBoxes.Add((actor, lines));
-        }
+        foreach (var actor in data)
+            areaBoxes.AddRange(TriggerVolume.Read(actor, graph?.Definitions(actor), graph?.FallKind(actor) ?? FallZoneKind.None));
+        ProbePoint = reportedProbe = null;
+        probeInside = [];
         if (data.Count > 0)
         {
             var min = data.Select(a => a.Position).Aggregate(Vector3.Min);
@@ -616,8 +634,7 @@ sealed partial class SceneView : Control
                         var c = transformed[shape.Indices[i + 2]];
                         var normal = Vector3.Cross(b - a, c - a);
                         float length = normal.Length();
-                        float shade = length > 1e-8f ? 0.42f + 0.5f * MathF.Abs(Vector3.Dot(normal / length, Vector3.Normalize(new Vector3(0.3f, 0.8f, 0.4f)))) : 0.5f;
-                        float r = (green ? 0.25f : rock ? 0.48f : 0.52f) * shade, g = (green ? 0.56f : rock ? 0.48f : 0.43f) * shade, bcol = (green ? 0.24f : rock ? 0.43f : 0.30f) * shade;
+                        float r = green ? 0.25f : rock ? 0.48f : 0.52f, g = green ? 0.56f : rock ? 0.48f : 0.43f, bcol = green ? 0.24f : rock ? 0.43f : 0.30f;
                         Vertex V(Vector3 p, int index)
                         {
                             var uv = shape.Uvs?[index] ?? Vector2.Zero;
@@ -625,16 +642,16 @@ sealed partial class SceneView : Control
                             if (n.LengthSquared() > 0.0001f && float.IsFinite(n.LengthSquared()))
                                 n = Vector3.Normalize(n);
                             else
-                                n = Vector3.Zero;
-                            float light = n == Vector3.Zero ? shade : 1;
-                            return shape.Texture == null ? new(p.X, p.Y, p.Z, r, g, bcol, 1) : new(p.X, p.Y, p.Z, light, light, light, 1, uv.X, uv.Y, n.X, n.Y, n.Z);
+                                n = length > 1e-8f ? normal / length : Vector3.UnitY;
+                            return new(p.X, p.Y, p.Z, r, g, bcol, 1, uv.X, uv.Y, n.X, n.Y, n.Z);
                         }
                         world[cursor++] = V(a, shape.Indices[i]);
                         world[cursor++] = V(b, shape.Indices[i + 1]);
                         world[cursor++] = V(c, shape.Indices[i + 2]);
                     }
                     if (cursor > shapeStart)
-                        ranges.Add(new SceneRange((uint)shapeStart, (uint)(cursor - shapeStart), category.Mask, shape.Texture, Owner: actor));
+                        ranges.Add(new SceneRange((uint)shapeStart, (uint)(cursor - shapeStart), category.Mask, shape.Texture, Owner: actor,
+                            Water: WaterMaterial.Classify(actor.Name, shape.Name), Center: (transformed.Aggregate(Vector3.Min) + transformed.Aggregate(Vector3.Max)) / 2));
                 }
                 if (float.IsFinite(min.X) && float.IsFinite(max.X))
                 {
@@ -699,7 +716,7 @@ sealed partial class SceneView : Control
     {
         if (Width <= 0 || Height <= 0 || !ClientRectangle.Contains(point) || !ScenePicking.Ray(point, ClientSize, ViewProjection((float)Width / Height), out var origin, out var direction))
             return null;
-        if (PickExtents)
+        if (PickExtents || PickTriggers)
         {
             Actor? selected = null;
             float best = float.PositiveInfinity;
@@ -714,19 +731,22 @@ sealed partial class SceneView : Control
                     selected = actor;
                 }
             }
-            if (ShowBounds)
+            if (ShowBounds && !PickTriggers)
                 foreach (var pair in actorBounds)
                     Consider(pair.Key, origin, direction, pair.Value.Min, pair.Value.Max);
             if (ShowAreaExtents)
                 foreach (var box in areaBoxes)
                 {
-                    var a = box.Actor;
-                    var transform = Matrix4x4.CreateScale(a.Scale) * Matrix4x4.CreateRotationX(a.Rotation.X) * Matrix4x4.CreateRotationY(a.Rotation.Y) * Matrix4x4.CreateRotationZ(a.Rotation.Z) * Matrix4x4.CreateTranslation(a.Position);
-                    if (Matrix4x4.Invert(transform, out var inverse))
-                        Consider(a, Vector3.Transform(origin, inverse), Vector3.TransformNormal(direction, inverse), -Vector3.One, Vector3.One);
+                    if (ZoneVisible(box) && box.Ray(origin, direction, out float hit) && hit < best)
+                    {
+                        best = hit;
+                        selected = box.Actor;
+                    }
                 }
             if (selected != null)
                 return selected;
+            if (PickTriggers)
+                return null;
         }
         else
         {
@@ -794,6 +814,11 @@ sealed partial class SceneView : Control
         {
             center = (box.Min + box.Max) / 2;
             distance = Math.Max(6, Vector3.Distance(box.Min, box.Max) * 1.1f);
+        }
+        else if (areaBoxes.FirstOrDefault(z => ReferenceEquals(z.Actor, actor)) is { } zone)
+        {
+            center = zone.Center;
+            distance = Math.Max(6, zone.Radius * 2.5f);
         }
         else
         {
@@ -892,7 +917,10 @@ sealed partial class SceneView : Control
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
             movementTimer.Dispose();
+            animationTimer.Dispose();
+        }
         base.Dispose(disposing);
     }
     private void AdjustFlySpeed(float factor)
@@ -941,13 +969,32 @@ sealed partial class SceneView : Control
             vertices.AddRange([V(p.X - sx, p.Y - sy), V(p.X + sx, p.Y - sy), V(p.X + sx, p.Y + sy), V(p.X - sx, p.Y - sy), V(p.X + sx, p.Y + sy), V(p.X - sx, p.Y + sy)]);
         }
         var selectionLines = new List<Vertex>();
+        var zoneLines = new List<Vertex>();
+        var zoneFaces = new List<Vertex>();
+        Vector3? probe = UpdateProbe();
+        if (probe is Vector3 point && !ProbeFollowsCamera)
+            selectionLines.AddRange(BoxLines(point - new Vector3(0.3f), point + new Vector3(0.3f), 0.4f, 1, 0.4f));
         if (ShowAreaExtents)
-            foreach (var box in areaBoxes)
-                if (ActorVisible(box.Actor))
-                    selectionLines.AddRange(box.Lines);
-        if (Selected != null && ActorVisible(Selected))
+            foreach (var zone in areaBoxes.Where(ZoneVisible).OrderByDescending(z => Vector3.DistanceSquared(CameraEye(), z.Center)))
+            {
+                bool active = probe is Vector3 pos && zone.Contains(pos);
+                foreach (var source in zone.Lines)
+                {
+                    var v = source;
+                    if (active)
+                    {
+                        v.R = 0.3f;
+                        v.G = 1;
+                        v.B = 0.4f;
+                    }
+                    zoneLines.Add(v);
+                }
+                if (FillZones)
+                    zoneFaces.AddRange(zone.Faces);
+            }
+        if (Selected != null && (ActorVisible(Selected) || areaBoxes.Any(z => ReferenceEquals(z.Actor, Selected) && ZoneVisible(z))))
         {
-            foreach (var area in areaBoxes.Where(b => ReferenceEquals(b.Actor, Selected)))
+            foreach (var area in areaBoxes.Where(b => ReferenceEquals(b.Actor, Selected) && ZoneVisible(b)))
                 foreach (var line in area.Lines)
                 {
                     var v = line;
@@ -969,7 +1016,7 @@ sealed partial class SceneView : Control
                         selectionLines.Add(new Vertex(b.X, b.Y, b.Z, r, g, 1, 1));
                     }
         }
-        renderer.Draw(Width, Height, matrix, vertices.ToArray(), CategoryMask, ShowBounds, selectionLines.ToArray(), GameRendering, ShowTerrain, nameMatches, FilterModels, Selected);
+        renderer.Draw(Width, Height, matrix, vertices.ToArray(), CategoryMask, ShowBounds, selectionLines.ToArray(), GameRendering, ShowTerrain, nameMatches, FilterModels, Selected, Rendering, CameraEye(), zoneFaces.ToArray(), zoneLines.ToArray(), ZoneXray);
     }
 }
 

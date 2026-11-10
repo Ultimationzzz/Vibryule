@@ -7,6 +7,7 @@ sealed class ActorInspector : UserControl
 {
     private readonly SpaceTabControl tabs = new() { Dock = DockStyle.Fill, Multiline = true, Padding = new Point(6, 5) };
     private readonly SpaceTreeView placement = Tree(), types = Tree();
+    private readonly SpaceTreeView trigger = Tree();
     private readonly SpaceDataGridView flags = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, RowHeadersVisible = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false };
     private readonly SpaceListBox links = new() { Dock = DockStyle.Fill, HorizontalScrollbar = true };
     private readonly SpaceTextBox raw = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font("Consolas", 9) };
@@ -27,6 +28,8 @@ sealed class ActorInspector : UserControl
         Page("Type arrays", types);
         Page("Links", links);
         Page("Raw", raw);
+        Page("Trigger", trigger);
+        trigger.NodeMouseDoubleClick += (_, e) => { if (e.Node?.Tag is Actor actor) Navigate?.Invoke(actor); };
         flags.Columns.Add("Name", "Name");
         flags.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Bool", HeaderText = "Bool", ThreeState = true, ReadOnly = true, ValueType = typeof(CheckState) });
         flags.Columns.Add("Value", "Stored value");
@@ -50,6 +53,7 @@ sealed class ActorInspector : UserControl
         flags.Rows.Clear();
         links.Items.Clear();
         raw.Clear();
+        trigger.Nodes.Clear();
         FlagFields = [];
         tabs.TabPages[1].Text = "Flags";
         tabs.TabPages[3].Text = "Links";
@@ -57,6 +61,10 @@ sealed class ActorInspector : UserControl
 
     internal void ShowActor(Actor actor, ActorGraph graph)
     {
+        trigger.BeginUpdate();
+        trigger.Nodes.Clear();
+        trigger.Nodes.AddRange(TriggerInfo.Nodes(actor, graph));
+        trigger.EndUpdate();
         title.Text = actor.Name + "\n" + (actor.Raw.TryGetProperty("Name", out var name) ? name.GetString() : actor.Source);
         placement.BeginUpdate();
         placement.Nodes.Clear();
@@ -96,6 +104,7 @@ sealed class ActorInspector : UserControl
         tabs.TabPages[3].Text = $"Links ({links.Items.Count})";
         raw.Text = JsonSerializer.Serialize(actor.Raw, new JsonSerializerOptions { WriteIndented = true });
     }
+    internal void ShowTriggerTab() => tabs.SelectedIndex = 5;
     internal static TreeNode ValueNode(string key, JsonElement value)
     {
         string summary = value.ValueKind switch

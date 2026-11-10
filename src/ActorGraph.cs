@@ -9,13 +9,34 @@ sealed class ActorGraph
 {
     private readonly Dictionary<Actor, List<ActorRelationship>> links = new(ReferenceEqualityComparer.Instance);
     private readonly IReadOnlyDictionary<string, JsonElement> metadata;
-    internal ActorGraph(IEnumerable<Actor> actors, IReadOnlyDictionary<string, JsonElement>? actorMetadata = null)
+    private readonly Dictionary<Actor, List<ActorLogicGroup>> groups = new(ReferenceEqualityComparer.Instance);
+    internal ActorGraph(IEnumerable<Actor> actors, IReadOnlyDictionary<string, JsonElement>? actorMetadata = null, IReadOnlyList<JsonElement>? logicGroups = null)
     {
         metadata = actorMetadata ?? new Dictionary<string, JsonElement>();
         var items = actors.ToArray();
         var byHash = items.Where(a => Hash(a.Raw, "Hash") != null).GroupBy(a => Hash(a.Raw, "Hash")!.Value).ToDictionary(g => g.Key, g => g.ToArray());
         foreach (var actor in items)
             links[actor] = [];
+        foreach (var raw in logicGroups ?? [])
+        {
+            if (raw.ValueKind != JsonValueKind.Object || !raw.TryGetProperty("References", out var refs) || refs.ValueKind != JsonValueKind.Array)
+                continue;
+            var members = new List<ActorLogicReference>();
+            foreach (var entry in refs.EnumerateArray())
+            {
+                if (Hash(entry, "Reference") is not ulong hash)
+                    continue;
+                var resolved = byHash.TryGetValue(hash, out var found) && found.Length == 1 ? found[0] : null;
+                members.Add(new(Text(entry, "Id") ?? Text(entry, "Path") ?? "Reference", hash, resolved));
+            }
+            var group = new ActorLogicGroup(Text(raw, "Logic") ?? "Unknown logic module", members);
+            foreach (var member in members.Where(m => m.Actor != null).Select(m => m.Actor!).Distinct())
+            {
+                if (!groups.TryGetValue(member, out var list))
+                    groups[member] = list = [];
+                list.Add(group);
+            }
+        }
         foreach (var actor in items)
         {
             if (!actor.Raw.TryGetProperty("Links", out var rawLinks) || rawLinks.ValueKind != JsonValueKind.Array)
@@ -36,6 +57,22 @@ sealed class ActorGraph
         }
     }
     internal IReadOnlyList<ActorRelationship> Links(Actor actor) => links.TryGetValue(actor, out var values) ? values : [];
+    internal IReadOnlyList<ActorLogicGroup> Groups(Actor actor) => groups.TryGetValue(actor, out var values) ? values : [];
+    internal static FallZoneKind ClassifyFallModule(string logic)
+    {
+        // Match the module directory, not incidental words or neighboring actors.
+        if (logic.Contains("/Gimmick_AreaContact_FallDown/", StringComparison.Ordinal))
+            return FallZoneKind.FallContact;
+        if (logic.Contains("/Gimmick_AreaContact_FallDown_Item/", StringComparison.Ordinal))
+            return FallZoneKind.ItemFall;
+        return FallZoneKind.None;
+    }
+    internal FallZoneKind FallKind(Actor actor)
+    {
+        if (!TriggerVolume.IsCandidate(actor))
+            return FallZoneKind.None;
+        return Groups(actor).Aggregate(FallZoneKind.None, (kind, group) => kind | ClassifyFallModule(group.Logic));
+    }
     internal JsonElement? Definitions(Actor actor) => metadata.TryGetValue(actor.Name, out var value) ? value : null;
     internal string Describe(Actor actor)
     {
@@ -114,6 +151,14 @@ sealed class ActorGraph
     private static string? Text(JsonElement obj, string key) => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
     private static ulong? Hash(JsonElement obj, string key) => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetUInt64(out var hash) ? hash : null;
 }
+
+record ActorLogicReference(string Id, ulong Hash, Actor? Actor);
+[Flags]
+enum FallZoneKind
+{
+    None = 0, FallContact = 1, ItemFall = 2
+}
+record ActorLogicGroup(string Logic, IReadOnlyList<ActorLogicReference> References);
 
 record ActorRelationship(string Direction, string Kind, ulong Hash, Actor? Target, bool Ambiguous)
 {

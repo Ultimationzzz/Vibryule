@@ -8,6 +8,20 @@ public partial class Form1
     {
         if (actors.Count != 0 || tree.Nodes.Count != 0 || view.World.Length != 0)
             throw new InvalidOperationException("A new viewer contains scene data before loading a local file.");
+        CreateControl();
+        PerformLayout();
+        int before = view.Width;
+        objectSplit.SplitterDistance += 60;
+        if (view.Width >= before)
+            throw new InvalidOperationException("Left divider did not resize the map.");
+        before = view.Width;
+        inspectorSplit.SplitterDistance -= 60;
+        if (view.Width >= before)
+            throw new InvalidOperationException("Right divider did not resize the map.");
+        ClientSize = new Size(1250, 720);
+        PerformLayout();
+        if (view.Width < 300 || inspectorSplit.Panel2.Width < 380 || objectSplit.Panel1.Width < 220)
+            throw new InvalidOperationException("Resizing lost a panel's minimum width.");
     }
     internal string RunUiChecks(string[] paths)
     {
@@ -64,11 +78,85 @@ public partial class Form1
                 throw new InvalidOperationException("Structured flag inspector is empty.");
         }
         view.CheckPicking();
-        return $"PASS: {actors.Count} placements, {view.ModeledCount} modeled, {view.AreaExtentCount} approximate area extents, search, selection, rendering toggles and fly camera.";
+        if (view.Zones.Count > 0)
+        {
+            filter.Text = "";
+            treeZonesOnly.Checked = true;
+            if (actorNodes.Keys.Any(a => !TriggerVolume.IsCandidate(a) && !a.Name.Contains("Event", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("Zone/event tree filter included unrelated actors.");
+            pickZones.Checked = true;
+            if (!view.PickTriggers || !view.ShowAreaExtents || view.PickExtents)
+                throw new InvalidOperationException("Trigger picking controls did not switch selection mode.");
+            approximateZones.Checked = false;
+            if (zoneList.Items.Cast<TriggerVolume>().Any(z => z.Evidence == ZoneEvidence.Approximate))
+                throw new InvalidOperationException("Approximate-volume filter failed.");
+            approximateZones.Checked = true;
+            zoneSearch.Text = "__no_zone_matches__";
+            if (zoneList.Items.Count != 0 || view.Zones.Any(view.ZoneVisible))
+                throw new InvalidOperationException("Zone search did not hide map volumes as well as list entries.");
+            zoneSearch.Text = "";
+            zoneType.SelectedIndex = 1;
+            if (view.Zones.Where(view.ZoneVisible).Any(z => z.Actor.Name != view.ZoneType))
+                throw new InvalidOperationException("Zone type filter left other types on the map.");
+            var zoneActor = view.Zones.First(view.ZoneVisible).Actor;
+            SelectActor(zoneActor);
+            selectedZoneOnly.Checked = true;
+            if (view.Zones.Where(view.ZoneVisible).Any(z => !ReferenceEquals(z.Actor, zoneActor)))
+                throw new InvalidOperationException("Isolate selected did not hide the other zones.");
+            areaExtents.Checked = false;
+            if (view.Zones.Any(view.ZoneVisible))
+                throw new InvalidOperationException("Hide all left zones visible.");
+            ShowAllZones();
+            if (view.Zones.Count(view.ZoneVisible) != view.Zones.Count || zoneSearch.Text.Length != 0 || zoneType.SelectedIndex != 0)
+                throw new InvalidOperationException("Show all did not reset zone filters.");
+            int fallCount = view.Zones.Count(z => z.FallKind.HasFlag(FallZoneKind.FallContact));
+            fallZones.Checked = false;
+            if (view.Zones.Count(view.ZoneVisible) != view.Zones.Count - fallCount || zoneList.Items.Cast<TriggerVolume>().Any(z => z.FallKind.HasFlag(FallZoneKind.FallContact)))
+                throw new InvalidOperationException("Fall toggle did not filter both list and map.");
+            ShowAllZones();
+            Console.WriteLine($"Fall zones: {fallCount} fall-contact candidate volumes, {view.Zones.Count(z => z.FallKind.HasFlag(FallZoneKind.ItemFall))} item-fall volumes.");
+            view.CheckZonePicking();
+            followProbe.Checked = true;
+            if (!view.ProbeFollowsCamera)
+                throw new InvalidOperationException("Camera probe toggle failed.");
+            followProbe.Checked = false;
+            if (view.ProbeFollowsCamera || view.ProbePoint != null)
+                throw new InvalidOperationException("Probe reset failed.");
+        }
+        return $"PASS: {actors.Count} placements, {view.ModeledCount} modeled, {view.AreaExtentCount} inspection volumes ({view.Zones.Count(z => z.Evidence == ZoneEvidence.Primitive)} primitives, {view.Zones.Count(z => z.Evidence == ZoneEvidence.ResourceBounds)} resource bounds), search, selection, zone filters/picking, rendering toggles and fly camera.";
     }
 }
 sealed partial class SceneView
 {
+    internal void CheckZonePicking()
+    {
+        var oldSize = Size;
+        try
+        {
+            Size = new Size(800, 600);
+            var zone = Zones.First(z => ZoneVisible(z));
+            Selected = zone.Actor;
+            SelectedZonesOnly = true;
+            FocusActor(zone.Actor);
+            if (!ReferenceEquals(PickAt(new Point(400, 300)), zone.Actor))
+                throw new InvalidOperationException("Zone center ray failed to select the focused volume.");
+            ZoneSearch = "__no_zone_matches__";
+            if (PickAt(new Point(400, 300)) != null)
+                throw new InvalidOperationException("Filtered-out zone was still clickable.");
+            IReadOnlyList<TriggerVolume>? overlaps = null;
+            void CaptureProbe(Vector3 point, IReadOnlyList<TriggerVolume> inside) => overlaps = inside;
+            ProbeChanged += CaptureProbe;
+            try
+            {
+                ProbePoint = zone.Center;
+                UpdateProbe();
+                if (overlaps == null || overlaps.Count != 0)
+                    throw new InvalidOperationException("Filtered-out zone still reported a probe overlap.");
+            }
+            finally { ProbeChanged -= CaptureProbe; ResetProbe(); }
+        }
+        finally { Size = oldSize; SelectedZonesOnly = false; ZoneSearch = ""; }
+    }
     internal void CheckPicking()
     {
         bool markers = ShowMarkers, candidates = ShowCandidates, extents = PickExtents;
@@ -80,13 +168,13 @@ sealed partial class SceneView
             Point? point = null;
             Actor? actor = null;
             for (int y = 80; y < 550 && actor == null; y += 65)
-            for (int x = 80; x < 750 && actor == null; x += 65)
-            {
-                var p = new Point(x, y);
-                actor = PickAt(p);
-                if (actor != null)
-                    point = p;
-            }
+                for (int x = 80; x < 750 && actor == null; x += 65)
+                {
+                    var p = new Point(x, y);
+                    actor = PickAt(p);
+                    if (actor != null)
+                        point = p;
+                }
             if (actor == null || point == null)
                 throw new InvalidOperationException("No visible mesh could be picked with markers disabled.");
             Actor? received = null;

@@ -15,20 +15,27 @@ static class Program
                 empty.CheckEmptyStartup();
             Console.WriteLine("PASS: empty startup has no bundled scene.");
             Console.WriteLine(ScrollChecks.Run());
+            Console.WriteLine(TriggerChecks.Run());
+            Console.WriteLine(LightingChecks.Run());
             if (args.Length == 2 && args[0] == "--scene")
             {
                 using var form = new Form1();
                 form.SuppressRenderingForChecks();
                 Console.WriteLine(form.RunUiChecks([args[1]]));
                 var input = SceneLoader.ReadScene([args[1]]);
+                var graph = new ActorGraph(input.Actors, input.ActorMetadata, input.LogicGroups);
+                Console.WriteLine($"Scene logic: {input.LogicGroups?.Count ?? 0} modules, {input.Actors.Count(a => graph.Groups(a).Count > 0)} referenced actors.");
                 using var view = new SceneView { SuppressRendering = true };
-                view.SetActors(input.Actors, input.GeometryDirectory);
+                view.SetActors(input.Actors, input.GeometryDirectory, graph);
+                Console.WriteLine($"Water materials: {view.WorldRanges.Count(r => r.Water == WaterKind.Surface)} surfaces, {view.WorldRanges.Count(r => r.Water == WaterKind.Waterfall)} waterfalls, {view.WorldRanges.Count(r => r.Water == WaterKind.Volume)} volume proxies.");
                 using var host = new Form { ClientSize = new Size(640, 480), ShowInTaskbar = false };
                 using var renderer = new Direct3DRenderer(host.Handle);
                 renderer.SetWorld(view.World, view.Boxes, view.WorldRanges, view.BoxRanges);
                 foreach (bool textures in new[] { true, false })
                     foreach (bool terrain in new[] { true, false })
                         renderer.Draw(640, 480, view.ViewProjection(640f / 480), [], 127, true, [], textures, terrain);
+                foreach (bool xray in new[] { false, true })
+                    renderer.Draw(640, 480, view.ViewProjection(640f / 480), [], 127, false, [], zoneFaces: view.Zones.SelectMany(z => z.Faces).ToArray(), zoneLines: view.Zones.SelectMany(z => z.Lines).ToArray(), zoneXray: xray);
                 renderer.SetWorld([], [], [], []);
                 renderer.Draw(320, 240, System.Numerics.Matrix4x4.Identity, [], 127, false, []);
                 Console.WriteLine("PASS: Direct3D textured/solid shaders, terrain toggles, bounds, resize and resource reset.");
