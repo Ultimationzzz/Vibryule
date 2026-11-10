@@ -65,6 +65,22 @@ static class TriggerChecks
         string Flatten(TreeNode node) => node.Text + string.Join("", node.Nodes.Cast<TreeNode>().Select(Flatten));
         var summary = string.Join("", TriggerInfo.Nodes(actor, graph).Select(Flatten));
         Require(summary.Contains("Test.Enter") && summary.Contains("execution order") && summary.Contains("approximate"), "Trigger summary omitted event evidence or uncertainty.");
+        using var defaults = JsonDocument.Parse("""{"BlackboardParamTable/Test.bgyml":{"Strings":[{"BBKey":"RequestEventName","InitVal":"Default.Enter","IsInstanceParam":true},{"BBKey":"NextStartPosName","InitVal":"SpawnA","IsInstanceParam":true}]}}""");
+        var configuredGraph = new ActorGraph([peer], new Dictionary<string, JsonElement> { [peer.Name] = defaults.RootElement });
+        var parameters = TriggerInfo.Parameters(peer, configuredGraph);
+        var requested = parameters.Single(p => p.Key == "RequestEventName");
+        Require(requested.Value.GetString() == "Test.Enter" && requested.Default?.GetString() == "Default.Enter" && requested.Source.Contains("Placement override"),
+            "Event summary lost the override or presented its default as another effective value.");
+        var actionNodes = TriggerInfo.Nodes(peer, configuredGraph).Single(n => n.Text.StartsWith("2 ·"));
+        Require(actionNodes.Nodes.Cast<TreeNode>().Any(n => n.Text.Contains("Test.Enter")) && actionNodes.Nodes.Cast<TreeNode>().Any(n => n.Text.Contains("SpawnA")),
+            "Summary omitted an overridden action or configured default destination.");
+        using var emptyEvent = JsonDocument.Parse("""{"Gyaml":"EventRequestActor","Dynamic":{"RequestEventName":""}}""");
+        var emptyPeer = peer with { Raw = emptyEvent.RootElement.Clone() };
+        var emptyGraph = new ActorGraph([emptyPeer], new Dictionary<string, JsonElement> { [peer.Name] = defaults.RootElement });
+        var emptyActions = TriggerInfo.Nodes(emptyPeer, emptyGraph).Single(n => n.Text.StartsWith("2 ·"));
+        Require(!emptyActions.Nodes.Cast<TreeNode>().Any(n => n.Text.StartsWith("Requested event")), "Empty override resurrected the default event.");
+        Require(TriggerInfo.Nodes(actor, graph).First().Text.Contains("Conditions") && summary.Contains("entry requirements are not decoded"),
+            "Inspector presented presence or module references as verified entry conditions.");
         using var view = new SceneView { SuppressRendering = true, ShowAreaExtents = true };
         view.SetActors([actor], null);
         var overlaps = new List<int>();

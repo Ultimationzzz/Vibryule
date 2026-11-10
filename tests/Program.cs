@@ -18,6 +18,9 @@ static class Program
             }
             Console.WriteLine("PASS: empty startup has no bundled scene.");
             Console.WriteLine("PASS: themed menu, retained NUP session, current scene selection, chooser search and busy state.");
+            using (var navigation = new Form1())
+                navigation.CheckSelectionNavigation();
+            Console.WriteLine("PASS: resolved-link following, framing, reference paths and selection/camera history.");
             Console.WriteLine(ScrollChecks.Run());
             Console.WriteLine(TriggerChecks.Run());
             Console.WriteLine(TerrainChecks.SignedHeightChecks());

@@ -110,10 +110,11 @@ public partial class Form1 : SpaceForm
         status.Text = "File → Open NUP to begin. Model bounds and inspection volumes are not verified collisions.";
         root.Controls.Add(status, 0, 2);
         filter.TextChanged += (_, _) => RefreshTree();
-        tree.AfterSelect += (_, e) => { if (e.Node?.Tag is Actor actor) SelectActor(actor); };
+        tree.AfterSelect += (_, e) => { if (e.Node?.Tag is Actor actor && !ReferenceEquals(view.Selected, actor)) SelectActor(actor); };
         tree.NodeMouseDoubleClick += (_, e) => { if (e.Node?.Tag is Actor actor) view.FocusActor(actor); };
         view.ActorPicked += SelectFromViewport;
-        details.Navigate += SelectFromViewport;
+        details.Navigate += FollowActor;
+        details.Back += BackSelection;
         UpdateMenuState();
         if (initialFiles is { Length: > 0 })
             Shown += (_, _) => LoadScene(initialFiles);
@@ -245,6 +246,8 @@ public partial class Form1 : SpaceForm
             actors = scene.Actors;
             graph = new ActorGraph(actors, scene.ActorMetadata, scene.LogicGroups);
             view.SetActors(actors, scene.GeometryDirectory, graph);
+            selectionHistory.Clear();
+            view.FollowedFrom = null;
             PopulateZoneTypes();
             followProbe.Checked = false;
             ResetProbePreview();
@@ -291,6 +294,7 @@ public partial class Form1 : SpaceForm
     }
     private void SelectActor(Actor actor)
     {
+        RememberSelection(actor);
         view.Selected = actor;
         view.Relationships = graph.Links(actor);
         view.Invalidate();
@@ -298,16 +302,19 @@ public partial class Form1 : SpaceForm
         RefreshZones();
         if (view.PickTriggers)
             details.ShowTriggerTab();
+        UpdateMenuState();
     }
     private void SelectFromViewport(Actor? actor)
     {
         if (actor == null)
         {
+            RememberSelection(null);
             view.Selected = null;
             view.Relationships = [];
             tree.SelectedNode = null;
             details.Clear();
             view.Invalidate();
+            UpdateMenuState();
             return;
         }
         if (!actorNodes.ContainsKey(actor))
@@ -329,7 +336,7 @@ public partial class Form1 : SpaceForm
         using var dialog = new SpaceForm { Text = $"Placement data — {actor.Name}", Width = 1100, Height = 800, StartPosition = FormStartPosition.CenterParent };
         var text = new ActorInspector { Dock = DockStyle.Fill };
         text.ShowActor(actor, graph);
-        text.Navigate += target => { SelectFromViewport(target); dialog.Close(); };
+        text.Navigate += target => { FollowActor(target); dialog.Close(); };
         dialog.Controls.Add(text);
         dialog.ShowDialog(this);
     }
@@ -624,6 +631,7 @@ sealed partial class SceneView : Control
         }
         actors = data;
         Selected = null;
+        FollowedFrom = null;
         Relationships = [];
         areaBoxes.Clear();
         foreach (var actor in data)
@@ -1066,6 +1074,7 @@ sealed partial class SceneView : Control
                         selectionLines.Add(new Vertex(b.X, b.Y, b.Z, r, g, 1, 1));
                     }
         }
+        selectionLines.AddRange(NavigationLines());
         renderer.Draw(Width, Height, matrix, vertices.ToArray(), CategoryMask, ShowBounds, selectionLines.ToArray(), GameRendering, ShowTerrain, nameMatches, FilterModels, SelectedModelActor, Rendering, CameraEye(), zoneFaces.ToArray(), zoneLines.ToArray(), ZoneXray);
     }
 }

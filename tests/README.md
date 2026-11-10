@@ -17,4 +17,6 @@ dotnet run --project tests/Vibryule.Checks.csproj -- --terrain "game.nup" HrlCas
 
 The default checks also render offscreen pixels to verify lighting, exposure, haze, wireframe, translucent zone depth/x-ray, water animation/layering, camera-relative sky/cloud controls and emissive color/brightness/toggles without leaking material state. Synthetic terrain resources verify signed floating-point heights and rejection of NaN/infinity. A synthetic BFRES verifies hierarchical rigid-bone transforms and normals on shared vertex buffers. The checks create native control handles but do not automate the desktop.
 
+Navigation checks verify resolved/unresolved links, follow-and-frame behavior, reference-line visibility, nested Back history, camera/mode/tab restoration, empty selections and busy loading. Trigger summaries preserve source/default evidence, apply instance overrides and keep empty overrides from reviving default events; shared module membership is never treated as execution order.
+
 Scene checks exercise hierarchy, zone filters/picking, logic references, camera movement and Direct3D rendering with local models, textures and zone overlays. Terrain checks validate tile heights, LOD coverage and shared edges. Keep assets, caches and test output outside the source repository.

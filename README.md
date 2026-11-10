@@ -26,7 +26,7 @@ Your NUP path is saved in `config.json` beside the app and reopened at startup. 
 - **Click an object:** select and highlight it. **Home** or **Scene → Focus Selected Object:** frame selection. **T:** top view.
 - Browse object types in the tree. The inspector shows typed fields, flag values/defaults, indexed arrays, placement links and raw data.
 - **Extent names** filters model bounds and markers by actor or placement name; commas mean “or.” Enable **Also filter models** to hide other models, or **Pick extents instead of surfaces** to select boxes. Zone visibility has its own filters under Zones.
-- Toggle terrain, game textures, lighting, bounds and area overlays independently. Double-click a resolved inspector link to select its destination.
+- Toggle terrain, game textures, lighting, bounds and area overlays independently. In **Links** or **Trigger**, select a resolved actor row and click **Follow selected link** (or double-click / press Enter) to select and frame its destination. A dashed cyan line shows the reference connection; it does not imply execution order. **Back** or **Alt+Left** restores the previous selection, camera and selection mode. Visibility filters stay in place; a yellow marker identifies a followed target even if its geometry is hidden.
 
 The right panel has separate full-height **Selection** and **Display & Filters** tabs. Display controls are grouped into **Scene**, **Lighting** and **Zones**. Use **Clean**, **Inspect** or **Triggers** for a quick starting view. Lighting controls adjust the sun direction, intensity, ambient light, exposure and distance haze; wireframe is available under Scene.
 
@@ -45,7 +45,7 @@ The **Scene** menu also offers Frame Scene and Top View. **View** opens the sele
 Use the two floating icons at the **top-left of the map**: the **cube selects objects**, and the **dashed box selects zones**. The active icon is highlighted; hover for a tooltip. `Ctrl+Shift+Z` switches modes. You can pick zones even with **Show zones on map** turned off: clicking reveals just the selected zone's outline. When zones overlap, the smallest zone under the cursor wins; equal-sized zones use the nearest hit. Model surfaces and markers are ignored in zone mode. Name/type and other zone filters still apply; clicking where no matching zone exists clears the selection. Changing filters does not turn the overlay back on.
 
 1. Click **Triggers**, then use **Filter map zones by name** or the zone-type dropdown. These filter the map and list together, without hiding world models. Commas match either name. **Show all** resets zone filters; **Hide all** hides the overlay; **Isolate selected zone** shows only the selected actor's volumes. The count shows how many volumes remain on the map. Click a volume to select it or double-click a list entry to frame it.
-2. Click **Open selection details**, or switch to **Selection → Trigger**, for stored conditions, event names, destination scenes, linked actors and shared logic-module references. Selecting zones keeps your filter tab open until you choose to inspect them.
+2. Click **Open selection details**, or switch to **Selection → Trigger**. The inspector separates **conditions**, **configured actions** and **linked actors**. Expand a value to see its source and type default; supported placement overrides replace the displayed default value. Related actors' actions are listed separately as evidence. Presence settings are not player-entry tests, and event timing/live flag state remain unknown. Selecting zones keeps your filter tab open until you choose to inspect them.
 3. Use **Probe at center**, or enable **Probe follows fly camera** and fly through a zone. Green outlines and the entry/exit list show which displayed volumes contain the probe. **Inspect zone when probe enters** opens its details automatically.
 
 Toggle translucent fill, through-wall display, approximate volumes and selected-only display separately. Cyan volumes come from resource primitives or stored bounds; amber volumes are approximations. The inspector identifies the source of each volume.
@@ -54,7 +54,7 @@ Turn off **Volumetric fog zones** under Zones to exclude `VolumeFogArea` volumes
 
 **Death / fall candidates** and **Item fall zones** have separate visibility toggles with scene counts. **Only death / fall candidates** isolates the former; **Show all** resets the filter. These classifications use direct `FallDown` logic-module references, not generic actor names. They identify fall-contact candidates, not confirmed lethal volumes; the Trigger inspector shows the evidence.
 
-Use **1.2.0 or newer** for all controls described here.
+Use **1.3.0 or newer** for all controls described here.
 
 ## Current limits
 

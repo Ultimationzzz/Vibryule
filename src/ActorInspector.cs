@@ -12,7 +12,13 @@ sealed class ActorInspector : UserControl
     private readonly SpaceListBox links = new() { Dock = DockStyle.Fill, HorizontalScrollbar = true };
     private readonly SpaceTextBox raw = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, Font = new Font("Consolas", 9) };
     private readonly Label title = new() { Dock = DockStyle.Top, Height = 44, ForeColor = SpaceTheme.Text, AutoEllipsis = true };
+    private readonly SpaceButton follow = new() { Text = "Follow selected link", Width = 166, Height = 28, Enabled = false };
+    private readonly SpaceButton back = new() { Text = "← Back", Width = 80, Height = 28, Enabled = false, ButtonStyle = SpaceButtonStyle.Secondary };
+    internal event Action? Back;
     internal event Action<Actor>? Navigate;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal int SelectedTab { get => tabs.SelectedIndex; set => tabs.SelectedIndex = value; }
+    internal void SetBackAvailable(bool available) => back.Enabled = available;
     internal IReadOnlyList<FlagField> FlagFields { get; private set; } = [];
     internal ActorInspector()
     {
@@ -30,20 +36,37 @@ sealed class ActorInspector : UserControl
         Page("Raw", raw);
         Page("Trigger", trigger);
         trigger.NodeMouseDoubleClick += (_, e) => { if (e.Node?.Tag is Actor actor) Navigate?.Invoke(actor); };
+        trigger.AfterSelect += (_, _) => UpdateFollow();
+        trigger.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { FollowSelected(); e.SuppressKeyPress = true; } };
+        links.SelectedIndexChanged += (_, _) => UpdateFollow();
+        tabs.SelectedIndexChanged += (_, _) => UpdateFollow();
+        follow.Click += (_, _) => FollowSelected();
+        back.Click += (_, _) => Back?.Invoke();
         flags.Columns.Add("Name", "Name");
         flags.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Bool", HeaderText = "Bool", ThreeState = true, ReadOnly = true, ValueType = typeof(CheckState) });
         flags.Columns.Add("Value", "Stored value");
         flags.Columns.Add("Default", "Type default");
         flags.Columns.Add("Source", "Source");
         flags.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
-        var hint = new Label { Dock = DockStyle.Bottom, Height = 34, ForeColor = SpaceTheme.Muted, Text = "Read-only resource values. Live flag state is unknown.\nDouble-click a resolved link to select its placement." };
+        var hint = new Label { Dock = DockStyle.Bottom, Height = 34, ForeColor = SpaceTheme.Muted, Text = "Read-only resource values. Live flag state is unknown.\nFollow a resolved link; Back / Alt+Left returns." };
+        var navigation = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, WrapContents = false };
+        navigation.Controls.AddRange([back, follow]);
         Controls.Add(tabs);
         Controls.Add(hint);
+        Controls.Add(navigation);
         Controls.Add(title);
         links.DoubleClick += (_, _) => { if (links.SelectedItem is ActorRelationship { Target: not null } link) Navigate?.Invoke(link.Target); };
         links.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter && links.SelectedItem is ActorRelationship { Target: not null } link) { Navigate?.Invoke(link.Target); e.Handled = true; } };
         Clear();
     }
+    private Actor? LinkTarget => tabs.SelectedIndex switch
+    {
+        3 => (links.SelectedItem as ActorRelationship)?.Target,
+        5 => trigger.SelectedNode?.Tag as Actor,
+        _ => null
+    };
+    private void UpdateFollow() => follow.Enabled = LinkTarget != null;
+    internal void FollowSelected() { if (LinkTarget is Actor actor) Navigate?.Invoke(actor); }
     private static SpaceTreeView Tree() => new() { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, ShowLines = true, ShowNodeToolTips = true, HideSelection = false };
     internal void Clear()
     {
@@ -57,6 +80,7 @@ sealed class ActorInspector : UserControl
         FlagFields = [];
         tabs.TabPages[1].Text = "Flags";
         tabs.TabPages[3].Text = "Links";
+        UpdateFollow();
     }
 
     internal void ShowActor(Actor actor, ActorGraph graph)
@@ -103,6 +127,7 @@ sealed class ActorInspector : UserControl
         links.Items.AddRange(graph.Links(actor).Cast<object>().ToArray());
         tabs.TabPages[3].Text = $"Links ({links.Items.Count})";
         raw.Text = JsonSerializer.Serialize(actor.Raw, new JsonSerializerOptions { WriteIndented = true });
+        UpdateFollow();
     }
     internal void ShowTriggerTab() => tabs.SelectedIndex = 5;
     internal static TreeNode ValueNode(string key, JsonElement value)

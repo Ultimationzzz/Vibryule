@@ -7,6 +7,25 @@ static class TriggerInfo
     internal static TreeNode[] Nodes(Actor actor, ActorGraph graph)
     {
         var nodes = new List<TreeNode>();
+        var conditions = new TreeNode("1 · Conditions (live state unknown)");
+        conditions.Nodes.Add("Player-entry requirements are not decoded.");
+        conditions.Nodes.Add("Presence settings describe availability, not entry.");
+        if (actor.Raw.TryGetProperty("Presence", out var presence))
+            conditions.Nodes.Add(ActorInspector.ValueNode("Presence settings", presence));
+        foreach (var parameter in Parameters(actor, graph).Where(p => IsCondition(p.Key)))
+            conditions.Nodes.Add(ParameterNode(parameter));
+        nodes.Add(conditions);
+        var configuredActions = new TreeNode("2 · Configured actions (timing unknown)");
+        foreach (var parameter in Parameters(actor, graph).Where(p => ActionLabel(p.Key) != null && HasValue(p.Value)))
+        {
+            var node = ParameterNode(parameter);
+            node.Text = ActionLabel(parameter.Key) + " · " + Display(parameter.Value);
+            configuredActions.Nodes.Add(node);
+        }
+        if (configuredActions.Nodes.Count == 0)
+            configuredActions.Nodes.Add("No recognized event or destination. Check linked actors.");
+        configuredActions.Nodes.Add("Entering this volume is not proven to run these actions.");
+        nodes.Add(configuredActions);
         var volumes = TriggerVolume.Read(actor, graph.Definitions(actor));
         var geometry = new TreeNode($"Inspection volumes ({volumes.Count})");
         foreach (var volume in volumes)
@@ -19,7 +38,6 @@ static class TriggerInfo
         }
         if (volumes.Count == 0)
             geometry.Nodes.Add("No supported volume for this actor. Follow its area references below.");
-        nodes.Add(geometry);
         if (graph.FallKind(actor) != FallZoneKind.None)
         {
             var purpose = new TreeNode("Fall-zone evidence — runtime outcome unverified");
@@ -28,42 +46,32 @@ static class TriggerInfo
             purpose.Nodes.Add("FallDown and item-fall modules are classified separately. Death, damage and restart behavior are not decoded.");
             nodes.Add(purpose);
         }
-        var actions = new TreeNode("Configured actions / conditions");
+        var actions = new TreeNode("All stored parameters and defaults");
         AddParameters(actions, actor, graph);
         if (actions.Nodes.Count == 0)
             actions.Nodes.Add("No event/destination parameters recorded on this actor.");
-        nodes.Add(actions);
         var related = graph.Links(actor).Select(l => l.Target)
             .Concat(graph.Groups(actor).SelectMany(g => g.References.Select(r => r.Actor)))
             .Where(a => a != null && !ReferenceEquals(a, actor)).Cast<Actor>().Distinct();
-        var configured = new TreeNode("Related logic evidence — entry timing unverified");
+        var configured = new TreeNode("Related action evidence (timing unknown)");
         foreach (var peer in related)
         {
-            if (!peer.Raw.TryGetProperty("Dynamic", out var values) || values.ValueKind != JsonValueKind.Object)
-                continue;
-            foreach (var field in values.EnumerateObject())
+            foreach (var field in Parameters(peer, graph))
             {
-                if (field.Value.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(field.Value.GetString()))
+                if (!HasValue(field.Value))
                     continue;
-                string? label = field.Name switch
-                {
-                    "RequestEventName" => "Requested event",
-                    "FirstEventName" => "First event",
-                    "InitEventName" => "Initial event",
-                    "NextEventName" => "Next event",
-                    "NextBancParamNameChild" => "Child destination",
-                    "NextBancParamNameAdult" => "Adult destination",
-                    "NextStartPosName" => "Destination start",
-                    "InitEventFlag" => "Initial event flag",
-                    _ => null
-                };
+                string? label = ActionLabel(field.Key);
                 if (label != null)
-                    configured.Nodes.Add(new TreeNode($"{label}: {field.Value.GetString()} [{peer.Name}]") { Tag = peer });
+                {
+                    var node = ParameterNode(field);
+                    node.Text = $"{label}: {Display(field.Value)} [{peer.Name}]";
+                    node.Tag = peer;
+                    node.Nodes.Add("Related actor evidence only. Follow to inspect its own conditions.");
+                    configured.Nodes.Add(node);
+                }
             }
         }
-        if (configured.Nodes.Count > 0)
-            nodes.Add(configured);
-        var linked = new TreeNode("Linked actors — double-click to inspect");
+        var linked = new TreeNode($"3 · Linked actors ({graph.Links(actor).Count})");
         foreach (var link in graph.Links(actor))
         {
             var node = new TreeNode(link.ToString()) { Tag = link.Target };
@@ -72,6 +80,12 @@ static class TriggerInfo
             linked.Nodes.Add(node);
         }
         nodes.Add(linked);
+        if (linked.Nodes.Count == 0)
+            linked.Nodes.Add("No explicit links. Check shared module references below.");
+        else
+            linked.Nodes.Add("Select a resolved row, then Follow selected link.");
+        if (configured.Nodes.Count > 0)
+            nodes.Add(configured);
         var logic = new TreeNode($"Shared logic modules ({graph.Groups(actor).Count})");
         foreach (var group in graph.Groups(actor))
         {
@@ -87,9 +101,12 @@ static class TriggerInfo
             logic.Nodes.Add(node);
         }
         nodes.Add(logic);
+        nodes.Add(geometry);
+        nodes.Add(actions);
         nodes.Add(new TreeNode("Entry preview tests a point against displayed volumes. It does not run AI, evaluate live flags or execute events."));
         foreach (var node in nodes)
-            node.Expand();
+            if (!ReferenceEquals(node, actions))
+                node.Expand();
         return nodes.ToArray();
     }
 
@@ -97,7 +114,16 @@ static class TriggerInfo
     {
         if (actor.Raw.TryGetProperty("Presence", out var presence))
             node.Nodes.Add(ActorInspector.ValueNode("Presence (live value unknown)", presence));
-        var parameters = new List<(string Key, JsonElement Value, string Source)>();
+        foreach (var entry in Parameters(actor, graph))
+            node.Nodes.Add(ParameterNode(entry));
+    }
+
+    internal record Parameter(string Key, JsonElement Value, string Source, JsonElement? Default = null);
+
+    internal static IReadOnlyList<Parameter> Parameters(Actor actor, ActorGraph graph)
+    {
+        var parameters = new List<Parameter>();
+        var overridden = new HashSet<string>(StringComparer.Ordinal);
         if (graph.Definitions(actor) is { ValueKind: JsonValueKind.Object } docs)
             foreach (var doc in docs.EnumerateObject())
             {
@@ -111,18 +137,53 @@ static class TriggerInfo
                                 continue;
                             string? name = key.GetString();
                             if (name != null && (field.TryGetProperty("InitVal", out var value) || field.TryGetProperty("InitValConverted", out value)))
-                                parameters.Add((name, value, "type default"));
+                            {
+                                var initial = value;
+                                string source = "Type default · " + doc.Name;
+                                if (field.TryGetProperty("IsInstanceParam", out var instance) && instance.ValueKind == JsonValueKind.True &&
+                                    actor.Raw.TryGetProperty("Dynamic", out var placementValues) && placementValues.ValueKind == JsonValueKind.Object && placementValues.TryGetProperty(name, out var supplied))
+                                {
+                                    value = supplied;
+                                    source = "Placement override · Dynamic." + name;
+                                    overridden.Add(name);
+                                }
+                                parameters.Add(new(name, value, source, initial));
+                            }
                         }
             }
         if (actor.Raw.TryGetProperty("Dynamic", out var dynamic) && dynamic.ValueKind == JsonValueKind.Object)
             foreach (var field in dynamic.EnumerateObject())
-                parameters.Add((field.Name, field.Value, "placement"));
-        foreach (var entry in parameters.OrderBy(p => p.Key, StringComparer.Ordinal))
-        {
-            if (entry.Value.ValueKind == JsonValueKind.String && string.IsNullOrEmpty(entry.Value.GetString()))
-                continue;
-            // Retain raw names and values: a parameter name is not proof of runtime behavior.
-            node.Nodes.Add(ActorInspector.ValueNode($"{entry.Key} ({entry.Source})", entry.Value));
-        }
+                if (!overridden.Contains(field.Name))
+                    parameters.Add(new(field.Name, field.Value, "Placement · Dynamic." + field.Name));
+        return parameters.OrderBy(p => p.Key, StringComparer.Ordinal).ToArray();
     }
+
+    private static TreeNode ParameterNode(Parameter parameter)
+    {
+        var node = ActorInspector.ValueNode(parameter.Key, parameter.Value);
+        node.ToolTipText = parameter.Source + "\n" + node.ToolTipText;
+        node.Nodes.Add("Source: " + parameter.Source);
+        if (parameter.Default is JsonElement initial)
+            node.Nodes.Add(ActorInspector.ValueNode("Type default", initial));
+        return node;
+    }
+
+    private static bool HasValue(JsonElement value) => value.ValueKind != JsonValueKind.Null &&
+        (value.ValueKind != JsonValueKind.String || !string.IsNullOrWhiteSpace(value.GetString()));
+    private static string Display(JsonElement value) => value.ValueKind == JsonValueKind.String ? value.GetString()! : value.GetRawText();
+    // Label known identifiers, without inferring their execution from names or proximity.
+    private static string? ActionLabel(string key) => key switch
+    {
+        "RequestEventName" => "Requested event",
+        "FirstEventName" => "First event identifier",
+        "InitEventName" => "Initial event identifier",
+        "NextEventName" => "Next event identifier",
+        "AddEventName" => "Additional event identifier",
+        "NextBancParamNameChild" => "Destination scene (child)",
+        "NextBancParamNameAdult" => "Destination scene (adult)",
+        "NextStartPosName" => "Destination start position",
+        _ => null
+    };
+    private static bool IsCondition(string key) => key.Contains("Flag", StringComparison.OrdinalIgnoreCase) ||
+        key.Contains("GameData", StringComparison.OrdinalIgnoreCase);
 }

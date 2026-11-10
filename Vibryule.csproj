@@ -8,7 +8,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <ApplicationIcon>assets\vibryule.ico</ApplicationIcon>
     <Authors>Ultimation</Authors>
     <Copyright>Copyright (c) 2026 Ultimation</Copyright>
