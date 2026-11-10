@@ -53,7 +53,7 @@ sealed class ScenePicker : SpaceForm
         actions.Controls.Add(cancel);
         AcceptButton = open;
         CancelButton = cancel;
-        Controls.Add(list);
+        Controls.Add(new SpaceScrollHost(list));
         Controls.Add(search);
         Controls.Add(top);
         Controls.Add(actions);

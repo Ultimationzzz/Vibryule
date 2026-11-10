@@ -69,7 +69,7 @@ public partial class Form1 : SpaceForm
         left.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         left.Controls.Add(Heading("OBJECTS"), 0, 0);
         left.Controls.Add(filter, 0, 1);
-        left.Controls.Add(tree, 0, 2);
+        left.Controls.Add(new SpaceScrollHost(tree), 0, 2);
         left.Controls.Add(counts, 0, 3);
         columns.Controls.Add(left, 0, 0);
         var viewport = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = SpaceTheme.Background, ColumnCount = 1, RowCount = 2, Margin = new Padding(0, 0, 8, 0) };
@@ -131,7 +131,7 @@ public partial class Form1 : SpaceForm
             categoryControls[category.Mask] = checkbox;
             filters.Controls.Add(checkbox);
         }
-        side.Controls.Add(filters, 0, 4);
+        side.Controls.Add(new SpaceScrollHost(filters), 0, 4);
         columns.Controls.Add(side, 2, 0);
         status.Text = "STATIC DATA  •  Geometry is experimental; model bounds are not collision shapes.";
         root.Controls.Add(status, 0, 2);

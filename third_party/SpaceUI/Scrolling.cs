@@ -2,13 +2,23 @@ using System.ComponentModel;
 
 namespace SpaceUI;
 
-/// <summary>Vertical scrollbar with pixel-independent range and no idle timer.</summary>
+/// <summary>Themed scrollbar with pixel-independent range and no idle timer.</summary>
 [DefaultEvent(nameof(ValueChanged))]
 public class SpaceScrollBar : Control, ISpaceThemeAware
 {
     private int maximum, value, viewport = 100;
     private bool hover, dragging;
-    private int dragY, dragValue;
+    private int dragStart, dragValue;
+    private Orientation orientation = Orientation.Vertical;
+    [DefaultValue(Orientation.Vertical)]
+    public Orientation Orientation
+    {
+        get => orientation;
+        set { if (orientation == value) return; orientation = value; Invalidate(); }
+    }
+    private int TrackLength => orientation == Orientation.Vertical ? Height : Width;
+    private int Axis(Point point) => orientation == Orientation.Vertical ? point.Y : point.X;
+    private int ThumbLength => orientation == Orientation.Vertical ? Thumb.Height : Thumb.Width;
     public event EventHandler? ValueChanged;
     [DefaultValue(24)] public int SmallChange { get; set; } = 24;
     [DefaultValue(0)] public int Maximum { get => maximum; set { int next = Math.Max(0, value); if (maximum == next) return; maximum = next; Value = Math.Min(this.value, maximum); Invalidate(); } }
@@ -27,9 +37,12 @@ public class SpaceScrollBar : Control, ISpaceThemeAware
     {
         get
         {
-            int height = Math.Min(Height, Math.Max((int)(28 * DeviceDpi / 96f), (int)(Height * (viewport / ((double)maximum + viewport)))));
-            int top = maximum == 0 ? 0 : (int)Math.Round((Height - height) * (value / (double)maximum));
-            return new Rectangle(3, top, Math.Max(1, Width - 6), height);
+            int length = Math.Min(TrackLength, Math.Max((int)(28 * DeviceDpi / 96f), (int)(TrackLength * (viewport / ((double)maximum + viewport)))));
+            int start = maximum == 0 ? 0 : (int)Math.Round((TrackLength - length) * (value / (double)maximum));
+            int inset = Math.Max(2, (int)(3 * DeviceDpi / 96f));
+            return orientation == Orientation.Vertical
+                ? new Rectangle(inset, start, Math.Max(1, Width - inset * 2), length)
+                : new Rectangle(start, inset, length, Math.Max(1, Height - inset * 2));
         }
     }
     public SpaceScrollBar()
@@ -50,23 +63,23 @@ public class SpaceScrollBar : Control, ISpaceThemeAware
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e); if (e.Button != MouseButtons.Left) return; Focus();
-        if (Thumb.Contains(e.Location)) { dragging = true; dragY = e.Y; dragValue = value; Capture = true; }
-        else Value += e.Y < Thumb.Top ? -viewport : viewport;
+        if (Thumb.Contains(e.Location)) { dragging = true; dragStart = Axis(e.Location); dragValue = value; Capture = true; }
+        else Value += Axis(e.Location) < (orientation == Orientation.Vertical ? Thumb.Top : Thumb.Left) ? -viewport : viewport;
     }
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
-        if (dragging && Height > Thumb.Height) Value = (int)Math.Clamp(dragValue + (e.Y - dragY) * (double)maximum / (Height - Thumb.Height), 0, maximum);
+        if (dragging && TrackLength > ThumbLength) Value = (int)Math.Clamp(dragValue + (Axis(e.Location) - dragStart) * (double)maximum / (TrackLength - ThumbLength), 0, maximum);
     }
     protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); dragging = false; Capture = false; Invalidate(Thumb); }
     protected override void OnMouseCaptureChanged(EventArgs e) { dragging = false; base.OnMouseCaptureChanged(e); }
-    protected override bool IsInputKey(Keys keyData) => keyData is Keys.Up or Keys.Down or Keys.Home or Keys.End or Keys.PageUp or Keys.PageDown || base.IsInputKey(keyData);
+    protected override bool IsInputKey(Keys keyData) => keyData is Keys.Left or Keys.Right or Keys.Up or Keys.Down or Keys.Home or Keys.End or Keys.PageUp or Keys.PageDown || base.IsInputKey(keyData);
     protected override void OnKeyDown(KeyEventArgs e)
     {
-        int next = e.KeyCode switch { Keys.Up => value - Math.Max(1, SmallChange), Keys.Down => value + Math.Max(1, SmallChange), Keys.PageUp => value - viewport, Keys.PageDown => value + viewport, Keys.Home => 0, Keys.End => maximum, _ => value };
+        int next = e.KeyCode switch { Keys.Up or Keys.Left => value - Math.Max(1, SmallChange), Keys.Down or Keys.Right => value + Math.Max(1, SmallChange), Keys.PageUp => value - viewport, Keys.PageDown => value + viewport, Keys.Home => 0, Keys.End => maximum, _ => value };
         if (next != value) { Value = next; e.Handled = true; } base.OnKeyDown(e);
     }
-    protected override void OnMouseWheel(MouseEventArgs e) { Value -= e.Delta / 120 * 48; base.OnMouseWheel(e); }
+    protected override void OnMouseWheel(MouseEventArgs e) { Value -= e.Delta / 120 * (SystemInformation.MouseWheelScrollLines < 0 ? viewport : Math.Max(1, SystemInformation.MouseWheelScrollLines) * SmallChange); base.OnMouseWheel(e); }
 }
 
 /// <summary>A vertically scrolling viewport. Add one top-docked or explicitly sized control to Content.</summary>

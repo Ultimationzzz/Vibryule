@@ -8,10 +8,13 @@ static class Program
         try
         {
             ApplicationConfiguration.Initialize();
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+            Application.SetColorMode(SystemColorMode.Dark);
             Console.WriteLine(SelectionChecks.Run());
             using (var empty = new Form1())
                 empty.CheckEmptyStartup();
             Console.WriteLine("PASS: empty startup has no bundled scene.");
+            Console.WriteLine(ScrollChecks.Run());
             if (args.Length == 2 && args[0] == "--scene")
             {
                 using var form = new Form1();

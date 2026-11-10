@@ -18,6 +18,9 @@ foreach ($file in @('README.md', 'LICENSE', 'CREDITS.md')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $output
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses') -Destination $output -Recurse
+$images = Join-Path $output 'docs/images'
+New-Item -ItemType Directory -Path $images -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs/images/vibryule.png') -Destination $images
 
 $runtime = Get-Content -LiteralPath (Join-Path $output 'Vibryule.runtimeconfig.json') -Raw | ConvertFrom-Json
 if ($runtime.runtimeOptions.includedFrameworks -or !$runtime.runtimeOptions.frameworks) {

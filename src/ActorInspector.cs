@@ -19,7 +19,7 @@ sealed class ActorInspector : UserControl
         void Page(string name, Control control)
         {
             var page = new TabPage(name) { BackColor = SpaceTheme.Surface, Padding = new Padding(4) };
-            page.Controls.Add(control);
+            page.Controls.Add(new SpaceScrollHost(control));
             tabs.TabPages.Add(page);
         }
         Page("Fields", placement);

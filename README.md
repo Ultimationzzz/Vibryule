@@ -1,3 +1,5 @@
+![Vibryule showing Hyrule Field with a selected drawbridge, actor data and themed scrollbars](docs/images/vibryule.png)
+
 # Vibryule
 
 A Windows 3D scene viewer for the Ocarina of Time remake. Explore terrain and objects from your own local NUP, inspect actor data, and follow placement links.
